@@ -57,3 +57,9 @@ cv-proyect/
 ```bash
 echo 'alias stage="/Users/devilijho/Documents/cv-proyect/stage"' >> ~/.zshrc && source ~/.zshrc
 ```
+
+## Documentation & License
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Directory layout and data flow
+- [docs/FUNCTIONALITIES.md](docs/FUNCTIONALITIES.md) — Quick reference of all modules, flags, and UI endpoints
+- [docs/CONTRIBUTING_AND_TUNING.md](docs/CONTRIBUTING_AND_TUNING.md) — Customizing `profile.json` and screening rules
+- [LICENSE](LICENSE) — **All Rights Reserved (Private Personal Use Only)**
