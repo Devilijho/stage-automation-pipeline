@@ -19,6 +19,9 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
+
 from playwright.sync_api import BrowserContext, Page, TimeoutError as PlaywrightTimeout, sync_playwright
 
 WORKSPACE = Path(__file__).resolve().parent.parent
@@ -304,6 +307,13 @@ def main() -> int:
     cv_pdf = Path(meta["cv_pdf"])
     lm_pdf = Path(meta["lm_pdf"])
     CHROME_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    # Remove stale SingletonLock if a previous Chrome crashed
+    lock_file = CHROME_PROFILE_DIR / "SingletonLock"
+    if lock_file.exists() or lock_file.is_symlink():
+        try:
+            lock_file.unlink()
+        except Exception:
+            pass
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
@@ -320,11 +330,23 @@ def main() -> int:
         print(f"[*] Cookie banner dismissed: {cookies_closed}")
 
         active_page, clicked = click_apply_and_follow_redirect(context, page)
+        if active_page.is_closed() and context.pages:
+            active_page = context.pages[-1]
+
+        if active_page.is_closed():
+            print("[*] Browser tab was closed by user.")
+            context.close()
+            return 0
+
         ats = detect_ats_provider(active_page.url)
         print(f"[*] Apply clicked: {clicked} | Active target: {ats} ({active_page.url})")
 
-        filled = fill_matching_fields(active_page, profile["form_answers"])
-        attached = inject_files(active_page, cv_pdf, lm_pdf)
+        try:
+            filled = fill_matching_fields(active_page, profile["form_answers"])
+            attached = inject_files(active_page, cv_pdf, lm_pdf)
+        except Exception as e:
+            print(f"[!] Form auto-fill interrupted ({e}); keeping browser open if still active.")
+            filled, attached = [], []
 
         print("\n" + "=" * 56)
         print("HUMAN-IN-THE-LOOP GATE — VERIFY BEFORE SUBMITTING")

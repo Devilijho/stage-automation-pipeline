@@ -13,6 +13,7 @@ import csv
 import html
 import json
 import mimetypes
+import os
 import subprocess
 import sys
 import threading
@@ -55,9 +56,13 @@ def run_background_script(cmd: List[str], label: str) -> bool:
 
     def worker() -> None:
         global CURRENT_PROC
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
         proc = subprocess.Popen(
             cmd,
             cwd=str(WORKSPACE),
+            env=env,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -233,6 +238,14 @@ class StageHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/applications/status":
             ok = update_application_status(body.get("url", ""), body.get("status", ""))
             self.send_json({"ok": ok})
+        elif parsed.path == "/api/stop":
+            with LOG_LOCK:
+                if CURRENT_PROC is not None and CURRENT_PROC.poll() is None:
+                    CURRENT_PROC.terminate()
+                    LOG_LINES.append(f"[{datetime.now().strftime('%H:%M:%S')}] Stopped by user.")
+                    self.send_json({"stopped": True})
+                else:
+                    self.send_json({"stopped": False})
         elif parsed.path == "/api/run":
             action = body.get("action", "search")
             limit = str(int(body.get("limit", 8)))
