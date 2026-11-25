@@ -356,6 +356,10 @@ def find_submit_button(page: Page):
         "button[aria-label*='Envoyer la candidature' i]",
         "button[aria-label*='Submit application' i]",
         "button:has-text('Envoyer la candidature')",
+        "button:has-text('Envoyer ma candidature')",
+        "button:has-text('Valider ma candidature')",
+        "button:has-text('Je postule')",
+        "button:has-text('Postuler maintenant')",
         "button:has-text('Submit application')",
         "button:has-text('Envoyer')",
         "button:has-text('Soumettre')",
@@ -479,6 +483,13 @@ def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[str]:
                     val = "École 42 Paris / IUT d'Orsay"
                 elif "description" in q:
                     val = "Développement C/C++/TypeScript, systèmes Linux, Docker, SQL, réseaux et sécurité (projets Webserv, Transcendence, Chaski-Booking)."
+                elif any(k in q for k in ("message au recruteur", "motivations", "message personnalisé", "pourquoi ce poste")):
+                    val = (
+                        f"Bonjour, étudiant en {answers.get('formation', 'BUT 2 Informatique')} ({answers.get('ecole', 'IUT d\'Orsay')}) et à l'École 42 Paris, "
+                        f"je recherche un stage de {answers.get('disponibilite', '3 mois du 03/05 au 16/07')}. "
+                        f"Opérationnel en C/C++, TypeScript, Linux, Docker et SQL, je serais ravi de rejoindre votre équipe. "
+                        f"Cordialement, {answers.get('nom_complet', 'Santiago FUENTES LLANOS')}."
+                    )
                 elif any(k in q for k in ("année", "années", "years", "combien d'exp", "how long", "how many years")):
                     val = "1"
                 elif any(k in q for k in ("durée", "duration", "combien de mois", "months")):
