@@ -100,23 +100,35 @@ def click_apply_and_follow_redirect(
     context: BrowserContext, page: Page
 ) -> Tuple[Page, bool]:
     """
-    Click Postuler / Candidature simplifiée and catch new-tab external ATS redirects
-    using `context.expect_page()` before clicking.
+    Wait for SPA Apply button, click Postuler / Candidature simplifiée,
+    and catch new-tab external ATS redirects using `context.expect_page()`.
     """
     selectors = [
-        "button:has-text('Candidature simplifiée')",
-        "button:has-text('Postuler sur le site')",
-        "a:has-text('Postuler sur le site')",
-        "button:has-text('Postuler')",
-        "a:has-text('Postuler')",
-        "button:has-text('Easy Apply')",
-        "button:has-text('Apply')",
-        "a:has-text('Apply')",
+        "button.jobs-apply-button:visible",
+        "button[aria-label*='Candidature simplifiée' i]:visible",
+        "button[aria-label*='Easy Apply' i]:visible",
+        "button:has-text('Candidature simplifiée'):visible",
+        "button:has-text('Easy Apply'):visible",
+        "button:has-text('Postuler sur le site'):visible",
+        "a:has-text('Postuler sur le site'):visible",
+        "button:has-text('Postuler'):visible",
+        "a:has-text('Postuler'):visible",
+        "button:has-text('Apply'):visible",
+        "a:has-text('Apply'):visible",
     ]
+    # Wait up to 8s for SPA pages (LinkedIn/WTTJ) to render the Apply button
+    try:
+        page.wait_for_selector(
+            "button.jobs-apply-button, button:has-text('Candidature simplifiée'), button:has-text('Easy Apply'), button:has-text('Postuler'), a:has-text('Postuler')",
+            timeout=8000,
+        )
+    except Exception:
+        pass
+
     for sel in selectors:
         try:
             loc = page.locator(sel).first
-            if not loc.is_visible(timeout=1500):
+            if not loc.is_visible(timeout=1000):
                 continue
 
             initial_url = page.url
