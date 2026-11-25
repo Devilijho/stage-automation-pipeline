@@ -393,6 +393,76 @@ def uncheck_follow_company(page: Page) -> None:
             continue
 
 
+CONFIRMATION_PHRASES = [
+    "votre candidature a été envoyée",
+    "candidature envoyée",
+    "application sent",
+    "your application was sent",
+    "merci pour votre candidature",
+    "thank you for applying",
+    "candidature enregistrée",
+]
+
+
+def check_submission_confirmed(page: Page) -> bool:
+    """Check if the page displays a confirmed submission message."""
+    try:
+        if page.is_closed():
+            return False
+        body_text = page.locator("body").inner_text(timeout=800).lower()
+        return any(phrase in body_text for phrase in CONFIRMATION_PHRASES)
+    except Exception:
+        return False
+
+
+def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[str]:
+    """Handle common LinkedIn Easy Apply <select> dropdowns, Oui/Yes radios, and numeric inputs."""
+    answered: List[str] = []
+    # 1. Select dropdowns (e.g. country code, Oui/Yes, English/French proficiency)
+    try:
+        selects = page.locator("select:visible")
+        for i in range(selects.count()):
+            sel = selects.nth(i)
+            try:
+                cur = (sel.input_value() or "").strip()
+                if cur and cur.lower() not in {"select an option", "sélectionner une option", ""}:
+                    continue
+                opts = [o.inner_text().strip() for o in sel.locator("option").all()]
+                for target in ("Oui", "Yes", "France (+33)", "C1", "Courant", "Fluent", "Bac+2"):
+                    match = next((o for o in opts if target.lower() in o.lower()), None)
+                    if match:
+                        sel.select_option(label=match)
+                        answered.append(f"select -> {match}")
+                        break
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # 2. Radio groups asking Oui/Yes (e.g., work authorization, sponsorship)
+    try:
+        fieldsets = page.locator("fieldset:visible")
+        for i in range(fieldsets.count()):
+            fs = fieldsets.nth(i)
+            try:
+                if fs.locator("input[type='radio']:checked").count() > 0:
+                    continue
+                legend = fs.inner_text().lower()
+                if any(k in legend for k in ("autoris", "légale", "work", "france", "stage", "convention", "disponib")):
+                    for lbl_txt in ("Oui", "Yes"):
+                        lbl = fs.locator(f"label:has-text('{lbl_txt}')").first
+                        if lbl.count() > 0 and lbl.is_visible(timeout=300):
+                            lbl.click()
+                            answered.append(f"radio -> {lbl_txt}")
+                            break
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return answered
+
+
 def process_application_steps(
     page: Page,
     answers: Dict[str, str],
@@ -414,6 +484,7 @@ def process_application_steps(
             break
         print(f"  [*] Processing form step {step}...")
         filled = fill_matching_fields(page, answers)
+        filled.extend(answer_common_questions(page, answers))
         attached = inject_files(page, cv_pdf, lm_pdf)
         all_filled.extend(filled)
         all_attached.extend(attached)
@@ -425,7 +496,10 @@ def process_application_steps(
             uncheck_follow_company(page)
             if auto_submit:
                 submit_btn.click()
-                page.wait_for_timeout(1800)
+                page.wait_for_timeout(2000)
+                if check_submission_confirmed(page):
+                    print("  [+] Submission confirmed on page!")
+                    return all_filled, all_attached, "applied"
                 return all_filled, all_attached, "applied"
             print("  [*] Reached final submit step — paused for your manual review.")
             return all_filled, all_attached, "ready_for_review"
@@ -562,12 +636,20 @@ def main() -> int:
             update_tracker_status(url, meta["company"], wizard_status)
             print(f"[+] Auto-mode finished with status: '{wizard_status}'.")
         elif not sys.stdin.isatty():
-            print("[*] UI mode: Chrome is open. Review & submit manually, then close the Chrome window when done.")
+            print("[*] UI mode: Chrome is open. Review & submit manually, then close Chrome (auto-detecting confirmation).")
+            confirmed = False
             try:
                 while len(context.pages) > 0:
+                    for p_open in list(context.pages):
+                        if not confirmed and check_submission_confirmed(p_open):
+                            confirmed = True
+                            update_tracker_status(url, meta["company"], "applied")
+                            print("[+] Confirmed submission on page! Updated status to 'applied'.")
                     context.pages[0].wait_for_timeout(500)
             except Exception:
                 pass
+            if not confirmed:
+                print("[*] Window closed without confirmation; status left unchanged.")
         else:
             print("Review the browser form and click 'Envoyer' manually.")
             try:
