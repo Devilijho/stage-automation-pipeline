@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PY="$ROOT_DIR/.venv/bin/python"
+
+if [[ ! -x "$PY" ]]; then
+  echo "[!] Missing .venv. Run: python3 -m venv .venv && .venv/bin/pip install playwright pypdf beautifulsoup4 requests"
+  exit 1
+fi
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+  search)
+    # Fetch offers & generate tailored CV/LM PDFs without opening browser queue
+    exec "$PY" "$ROOT_DIR/scripts/batch_apply.py" --scrape-only "$@"
+    ;;
+  apply)
+    # Search + tailor + open manual-review browser queue
+    exec "$PY" "$ROOT_DIR/scripts/batch_apply.py" "$@"
+    ;;
+  auto)
+    # Search + tailor + auto-submit simple forms (complex portals marked manual_portal)
+    exec "$PY" "$ROOT_DIR/scripts/batch_apply.py" --auto "$@"
+    ;;
+  tailor)
+    # Tailor CV & LM for a single URL or text
+    exec "$PY" "$ROOT_DIR/scripts/tailor.py" "$@"
+    ;;
+  open)
+    # Open browser assistant for a specific company folder in output/
+    if [[ $# -lt 1 ]]; then
+      echo "Usage: ./stage open <CompanyFolderName> [--auto]"
+      exit 1
+    fi
+    company="$1"
+    shift
+    exec "$PY" "$ROOT_DIR/scripts/apply_browser.py" --meta "$ROOT_DIR/output/$company/metadata.json" "$@"
+    ;;
+  sync)
+    # Re-index GitHub repos into config/master_profile.md
+    exec "$PY" "$ROOT_DIR/scripts/sync_github.py" "$@"
+    ;;
+  ui)
+    # Launch the macOS StageBot Web UI
+    exec "$PY" "$ROOT_DIR/scripts/ui_server.py" "$@"
+    ;;
+  report)
+    # Generate University Proof Report HTML and open it
+    "$PY" -c "import sys; sys.path.insert(0, '$ROOT_DIR/scripts'); import ui_server; p = ui_server.generate_university_report(); print('Report generated:', p)"
+    open "$ROOT_DIR/data/rapport_candidatures.html"
+    ;;
+  status)
+    # Pretty-print applications tracker
+    "$PY" -c "
+import csv
+from pathlib import Path
+p = Path('$ROOT_DIR/data/applications.csv')
+rows = list(csv.DictReader(p.open(encoding='utf-8')))
+print(f'Total tracked offers: {len(rows)}')
+for i, r in enumerate(rows, 1):
+    print(f\"{i:2d}. [{r['Status']:13s}] {r['Company']} — {r['Role']}\")
+    print(f\"    {r['URL']}\")
+"
+    ;;
+  *)
+    cat <<'EOF'
+Stage Application Pipeline — Simple Commands
+
+  ./stage ui                       Launch the macOS desktop Web UI
+  ./stage report                   Generate & open University Proof Report
+  ./stage search [--limit 12]      Search offers & generate tailored CV/LM PDFs
+  ./stage apply  [--limit 8]       Search + tailor + open manual-review Chrome queue
+  ./stage auto   [--limit 8]       Search + tailor + auto-submit simple forms
+  ./stage open   <Company>         Open Chrome assistant for an already-tailored company
+  ./stage tailor --url <URL>       Tailor CV & LM for one specific job URL
+  ./stage sync                     Re-index GitHub repos into config/master_profile.md
+  ./stage status                   Show all tracked offers & statuses
+
+Tip: Add a global alias in ~/.zshrc:
+  alias stage="/Users/devilijho/Documents/cv-proyect/stage"
+EOF
+    ;;
+esac

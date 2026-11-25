@@ -1,0 +1,129 @@
+\documentclass[10pt,a4paper]{article}
+
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[utf8]{inputenc}
+  \usepackage[T1]{fontenc}
+\fi
+\usepackage[french]{babel}
+\usepackage{lmodern}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage[top=1.1cm, bottom=1.1cm, left=1.4cm, right=1.4cm]{geometry}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{xcolor}
+
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+
+\titleformat{\section}
+  {\normalsize\bfseries\uppercase}
+  {}
+  {0em}
+  {}
+  [\vspace{-0.65em}\rule{\linewidth}{0.5pt}]
+\titlespacing*{\section}{0pt}{0.55em}{0.35em}
+
+\setlist[itemize]{leftmargin=1.1em, itemsep=0.12em, parsep=0pt, topsep=0.15em, label=--}
+
+\begin{document}
+
+% === HEADER ===
+\begin{center}
+  {\LARGE\bfseries Santiago FUENTES LLANOS}\\[0.25em]
+  % === CV_TITLE_START ===
+  {\large\bfseries Stage -- Analyste Cybersécurité \& Développement Systèmes}\\[0.2em]
+  % === CV_TITLE_END ===
+  % === CV_AVAILABILITY_START ===
+  {\small\textbf{Disponibilité :} Du 03/05 au 16/07 pour une durée de 3 mois (prolongeable durant l'été)}\\[0.15em]
+  % === CV_AVAILABILITY_END ===
+  {\small santi.fuentes.llanos@gmail.com \textperiodcentered{} +33 7 79 73 74 19 \textperiodcentered{} Bures-sur-Yvette, France}\\
+  {\small \href{https://github.com/Devilijho}{github.com/Devilijho} \textperiodcentered{} \href{https://www.linkedin.com/in/santiago-f-ll}{linkedin.com/in/santiago-f-ll}}
+\end{center}
+
+\vspace{0.25em}
+% === CV_ACCROCHE_START ===
+{\small\itshape
+Étudiant en 2\textsuperscript{ème} année de BUT Informatique (Réseaux, Cryptographie et Sécurité) avec le Tronc Commun de l'École 42 validé, je recherche un stage de 3 mois du 03/05 au 16/07 (prolongeable durant l'été). Passionné par l'ingénierie logicielle, la sécurité bas niveau et les systèmes, je maîtrise les environnements UNIX, le développement C/C++/TypeScript et l'architecture réseau. Rigoureux et autonome, je souhaite contribuer concrètement à vos projets techniques.
+}
+% === CV_ACCROCHE_END ===
+
+% === SKILLS_SECTION_START ===
+\section*{Compétences Techniques}
+{\small
+\textbf{Langages :} C, C++, Assembly (x86), Java, SQL (Oracle / SQLite), HTML5/CSS3, JavaScript, TypeScript, Notions de C\#\\
+\textbf{Sécurité \& Débogage :} GDB, Valgrind (Memcheck, Helgrind), Analyse mémoire, Reverse Engineering (notions)\\
+\textbf{Systèmes \& DevOps :} Linux (UNIX), Windows, MacOS, Git, Docker, VirtualBox\\
+\textbf{Frameworks \& Outils :} Node.js, React, Three.js, Eclipse, Visual Paradigm, Modélisation (MCD/SR)
+}
+% === SKILLS_SECTION_END ===
+
+% === PROJECTS_SECTION_START ===
+\section*{Projets Informatiques}
+{\small
+\textbf{Webserv -- École 42} --- \textit{Serveur HTTP \& Sécurité Réseau en C++}
+\begin{itemize}
+  \item Développement d'un serveur HTTP/1.1 conforme RFC avec multiplexation d'I/O non-bloquantes (\texttt{select}/\texttt{poll}/\texttt{kqueue}).
+  \item Sécurisation du parsing des requêtes contre les attaques par déni de service (DoS), corruption de flux et injection de payloads.
+  \item Gestion rigoureuse des descripteurs de fichiers, des sessions TCP et des codes d'état HTTP.
+\end{itemize}
+
+\vspace{0.25em}
+\textbf{Cub3d -- École 42} --- \textit{Moteur 3D \& Gestion Mémoire Bas Niveau en C}
+\begin{itemize}
+  \item Implémentation d'un moteur de rendu graphique par raycasting (algorithmique bas niveau et arithmétique de pointeurs).
+  \item Audit de sécurité mémoire : prévention proactive des débordements de tampon (buffer overflows) et validation stricte avec Valgrind (zéro fuite mémoire / segmentation fault).
+  \item Parsing défensif des fichiers de configuration de scènes (validation stricte des entrées utilisateurs).
+\end{itemize}
+
+\vspace{0.25em}
+\textbf{Game Jam IUT Paris-Saclay} --- \textit{Hackathon de Programmation (36h)}
+\begin{itemize}
+  \item Conception rapide et sécurisée d'un exécutable complet sous contrainte de temps stricte.
+  \item Structuration de la logique applicative, gestion des états et tests fonctionnels pour éliminer les bugs d'exécution critiques.
+\end{itemize}
+}
+% === PROJECTS_SECTION_END ===
+
+\section*{Formation}
+{\small
+\textbf{2025 -- 2028 (En cours) : BUT Informatique} --- \textit{Université Paris-Saclay (IUT d'Orsay)}
+\begin{itemize}
+  \item Parcours B en BUT 2 : Réseaux avancés, Cryptographie, Sécurité.
+  \item Administration, supervision et sécurisation des réseaux et systèmes complexes.
+\end{itemize}
+\textbf{Avril 2026 : École 42 Paris}
+\begin{itemize}
+  \item Apprentissage par projets, Peer-learning, programmation avancée (C/C++/TypeScript).
+\end{itemize}
+\textbf{Juin 2025 : Baccalauréat Général}
+\begin{itemize}
+  \item Mention « Bien ». Spécialités Mathématiques et Numérique et Sciences Informatiques (NSI).
+\end{itemize}
+}
+
+\section*{Expérience Professionnelle}
+{\small
+\textbf{2022 -- 2023 : Responsable Opérationnel (E-commerce)} --- \textit{Mimitos Click}
+\begin{itemize}
+  \item Gestion de la logistique et du marketing digital pour une boutique en ligne.
+  \item Suivi des commandes, résolution de problèmes et maintien de la qualité de service client.
+\end{itemize}
+}
+
+\section*{Soft Skills \& Centres d'Intérêt}
+{\small
+\begin{itemize}
+  \item \textbf{Soft Skills :} Rigueur scientifique, capacité d'adaptation, autonomie, travail en équipe (Peer-learning).
+  \item \textbf{Centres d'intérêt :} Cybersécurité offensive (défis Capture The Flag / Reverse Engineering) et pratique de la guitare.
+\end{itemize}
+}
+
+\section*{Langues}
+{\small
+\textbf{Espagnol :} Langue maternelle \quad \textperiodcentered{} \quad \textbf{Anglais :} Niveau C1 (Professionnel) \quad \textperiodcentered{} \quad \textbf{Français :} Niveau C1 (Professionnel)
+}
+
+\end{document}

@@ -1,0 +1,23 @@
+# Python & Playwright runtime
+.venv/
+__pycache__/
+*.pyc
+.cache/
+.chrome_profile/
+
+# Personal data & generated artifacts (keep private)
+config/profile.json
+config/master_profile.md
+config/curriculum_but2_b.md
+data/applications.csv
+data/rapport_candidatures.html
+output/
+
+# LaTeX build outputs
+*.pdf
+*.aux
+*.log
+*.out
+
+# macOS
+.DS_Store

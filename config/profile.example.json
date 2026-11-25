@@ -1,0 +1,65 @@
+{
+  "personal": {
+    "first_name": "Prénom",
+    "last_name": "NOM",
+    "full_name": "Prénom NOM",
+    "email": "you@example.com",
+    "phone": "+33 6 00 00 00 00",
+    "location": "Paris, France",
+    "city": "Paris",
+    "country": "France"
+  },
+  "links": {
+    "github_username": "YourGitHubUsername",
+    "github_url": "https://github.com/YourGitHubUsername",
+    "linkedin_url": "https://www.linkedin.com/in/your-profile"
+  },
+  "education": {
+    "school": "Université / IUT",
+    "degree": "BUT Informatique",
+    "level": "Bac+2 / BUT 2",
+    "secondary_school": "",
+    "graduation_year": "2028"
+  },
+  "internship": {
+    "start_date": "03/05",
+    "end_date": "16/07",
+    "start_date_fr": "3 mai",
+    "end_date_fr": "16 juillet",
+    "duration": "3 mois",
+    "availability_short": "Du 03/05 au 16/07 (3 mois, prolongeable durant l'été)",
+    "availability_full": "Stage de 3 mois du 3 mai au 16 juillet, avec possibilité de prolongation sur l'été si besoin",
+    "priority_repos": []
+  },
+  "search": {
+    "queries": [
+      "stage informatique",
+      "stage développeur",
+      "stage cybersécurité",
+      "stage réseaux systèmes"
+    ],
+    "location": "Paris, Île-de-France, France",
+    "location_short": "Paris",
+    "location_boost": ["paris", "île-de-france", "saclay", "orsay"],
+    "level_boost": ["but 2", "but 3", "bac+2", "bac+3", "3 mois"]
+  },
+  "commit_authors": ["YourGitHubUsername", "you@example.com"],
+  "form_answers": {
+    "prenom": "Prénom",
+    "nom": "NOM",
+    "nom_complet": "Prénom NOM",
+    "email": "you@example.com",
+    "telephone": "+33 6 00 00 00 00",
+    "ville": "Paris",
+    "pays": "France",
+    "ecole": "Université / IUT",
+    "niveau": "Bac+2 / BUT 2",
+    "formation": "BUT Informatique",
+    "disponibilite": "Du 03/05 au 16/07 (3 mois, prolongeable l'été)",
+    "duree": "3 mois",
+    "github": "https://github.com/YourGitHubUsername",
+    "linkedin": "https://www.linkedin.com/in/your-profile",
+    "autorisation_travail": "Oui",
+    "mobilite": "Île-de-France / Télétravail"
+  }
+}
