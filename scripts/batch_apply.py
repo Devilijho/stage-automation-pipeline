@@ -319,66 +319,84 @@ def main() -> int:
         action="store_true",
         help="Skip external ATS redirects that require manual account/form entry",
     )
+    parser.add_argument(
+        "--retry",
+        choices=["drafted", "manual_portal", "pending"],
+        default="",
+        help="Skip scraping and retry existing offers in applications.csv by status",
+    )
     args = parser.parse_args()
 
-    existing_urls = load_existing_urls()
-    raw_offers: List[Dict[str, str]] = []
-    seen_urls: Set[str] = set()
-
-    for q in args.queries:
-        if "linkedin" in args.sources:
-            for o in scrape_linkedin_paginated(q, args.per_query, easy_apply=args.easy_apply):
-                norm = o["url"].rstrip("/").lower()
-                if norm not in existing_urls and norm not in seen_urls:
-                    seen_urls.add(norm)
-                    raw_offers.append(o)
-        if "hellowork" in args.sources:
-            for o in scrape_hellowork_paginated(q, args.per_query):
-                norm = o["url"].rstrip("/").lower()
-                if norm not in existing_urls and norm not in seen_urls:
-                    seen_urls.add(norm)
-                    raw_offers.append(o)
-
-    print(f"\n[*] Found {len(raw_offers)} new unseen offers. Fetching details & scoring...")
-    detailed_offers: List[Dict[str, Any]] = []
-    for o in raw_offers[: args.limit * 2]:
-        try:
-            det = fetch_offer_details(o)
-            sc = score_offer(det["role"], det["location"], det["text"])
-            if sc >= 0:
-                det["score"] = sc
-                detailed_offers.append(det)
-            time.sleep(0.3)
-        except Exception as e:
-            print(f"  [!] Skipping {o['url']}: {e}")
-
-    detailed_offers.sort(key=lambda x: -x["score"])
-    selected = detailed_offers[: args.limit]
-    print(f"[*] Selected top {len(selected)} offers (ranked for BUT 2/3 & Paris/Saclay area).")
-
     queue_metas: List[Path] = []
-    for idx, offer in enumerate(selected, 1):
-        print(
-            f"\n[{idx}/{len(selected)}] Tailoring ({offer['source']}): "
-            f"{offer['role']} @ {offer['company']} (score={offer['score']})"
-        )
-        meta_path = run_tailor_for_offer(offer)
-        if meta_path:
-            queue_metas.append(meta_path)
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            print(f"  -> CV : {meta['cv_pdf']}")
-            print(f"  -> LM : {meta['lm_pdf']}")
+    if args.retry:
+        target_statuses = {"drafted", "manual_portal"} if args.retry == "pending" else {args.retry}
+        if APPS_CSV_PATH.exists():
+            with APPS_CSV_PATH.open("r", newline="", encoding="utf-8") as f:
+                for r in csv.DictReader(f):
+                    if (r.get("Status") or "").strip().lower() in target_statuses and r.get("CV_PDF"):
+                        mp = WORKSPACE / Path(r["CV_PDF"]).parent / "metadata.json"
+                        if mp.exists() and mp not in queue_metas:
+                            queue_metas.append(mp)
+        queue_metas = queue_metas[: args.limit]
+        print(f"[*] Retrying {len(queue_metas)} existing '{args.retry}' offer(s)...")
+    else:
+        existing_urls = load_existing_urls()
+        raw_offers: List[Dict[str, str]] = []
+        seen_urls: Set[str] = set()
 
-    if not queue_metas and not args.scrape_only and APPS_CSV_PATH.exists():
-        # Fall back to existing 'drafted' offers so launching manual queue always opens pending offers
-        with APPS_CSV_PATH.open("r", newline="", encoding="utf-8") as f:
-            for r in csv.DictReader(f):
-                if (r.get("Status") or "").strip().lower() == "drafted" and r.get("CV_PDF"):
-                    mp = WORKSPACE / Path(r["CV_PDF"]).parent / "metadata.json"
-                    if mp.exists() and mp not in queue_metas:
-                        queue_metas.append(mp)
-        if queue_metas:
-            print(f"[*] No brand-new offers found; queuing {len(queue_metas)} pending 'drafted' offer(s).")
+        for q in args.queries:
+            if "linkedin" in args.sources:
+                for o in scrape_linkedin_paginated(q, args.per_query, easy_apply=args.easy_apply):
+                    norm = o["url"].rstrip("/").lower()
+                    if norm not in existing_urls and norm not in seen_urls:
+                        seen_urls.add(norm)
+                        raw_offers.append(o)
+            if "hellowork" in args.sources:
+                for o in scrape_hellowork_paginated(q, args.per_query):
+                    norm = o["url"].rstrip("/").lower()
+                    if norm not in existing_urls and norm not in seen_urls:
+                        seen_urls.add(norm)
+                        raw_offers.append(o)
+
+        print(f"\n[*] Found {len(raw_offers)} new unseen offers. Fetching details & scoring...")
+        detailed_offers: List[Dict[str, Any]] = []
+        for o in raw_offers[: args.limit * 2]:
+            try:
+                det = fetch_offer_details(o)
+                sc = score_offer(det["role"], det["location"], det["text"])
+                if sc >= 0:
+                    det["score"] = sc
+                    detailed_offers.append(det)
+                time.sleep(0.3)
+            except Exception as e:
+                print(f"  [!] Skipping {o['url']}: {e}")
+
+        detailed_offers.sort(key=lambda x: -x["score"])
+        selected = detailed_offers[: args.limit]
+        print(f"[*] Selected top {len(selected)} offers (ranked for BUT 2/3 & Paris/Saclay area).")
+
+        for idx, offer in enumerate(selected, 1):
+            print(
+                f"\n[{idx}/{len(selected)}] Tailoring ({offer['source']}): "
+                f"{offer['role']} @ {offer['company']} (score={offer['score']})"
+            )
+            meta_path = run_tailor_for_offer(offer)
+            if meta_path:
+                queue_metas.append(meta_path)
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                print(f"  -> CV : {meta['cv_pdf']}")
+                print(f"  -> LM : {meta['lm_pdf']}")
+
+        if not queue_metas and not args.scrape_only and APPS_CSV_PATH.exists():
+            # Fall back to existing 'drafted' offers so launching manual queue always opens pending offers
+            with APPS_CSV_PATH.open("r", newline="", encoding="utf-8") as f:
+                for r in csv.DictReader(f):
+                    if (r.get("Status") or "").strip().lower() == "drafted" and r.get("CV_PDF"):
+                        mp = WORKSPACE / Path(r["CV_PDF"]).parent / "metadata.json"
+                        if mp.exists() and mp not in queue_metas:
+                            queue_metas.append(mp)
+            if queue_metas:
+                print(f"[*] No brand-new offers found; queuing {len(queue_metas)} pending 'drafted' offer(s).")
 
     if args.scrape_only or not queue_metas:
         print(f"\n[+] Done! Tailored {len(queue_metas)} offers. Logged in {APPS_CSV_PATH}.")

@@ -258,6 +258,17 @@ class StageHandler(BaseHTTPRequestHandler):
             elif action == "login":
                 cmd = [PYTHON_BIN, str(SCRIPTS_DIR / "apply_browser.py"), "--login"]
                 started = run_background_script(cmd, "Login Chrome (LinkedIn & HelloWork)")
+            elif action == "mail":
+                cmd = [PYTHON_BIN, str(SCRIPTS_DIR / "spontaneous_mail.py"), "--limit", limit]
+                started = run_background_script(cmd, "Spontaneous Local Emails")
+            elif action == "retry":
+                retry_status = body.get("retry_status", "drafted")
+                cmd = [PYTHON_BIN, str(SCRIPTS_DIR / "batch_apply.py"), "--retry", retry_status, "--limit", limit]
+                if body.get("auto"):
+                    cmd.append("--auto")
+                if body.get("skip_external"):
+                    cmd.append("--skip-external")
+                started = run_background_script(cmd, f"Retry ({retry_status})")
             elif action == "open":
                 cv_pdf = body.get("cv_pdf", "")
                 offer_url = body.get("url", "")

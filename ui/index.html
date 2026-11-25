@@ -31,6 +31,9 @@
   .lang-bar { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
   .lang-btn { background: var(--bg); color: var(--muted); border: none; padding: 6px 10px; font-size: 12px; font-weight: 600; cursor: pointer; }
   .lang-btn.active { background: #1f2937; color: var(--accent); }
+  .pill-group { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+  .pill { background: var(--bg); color: var(--muted); border: 1px solid var(--border); padding: 7px 13px; border-radius: 999px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all .15s; }
+  .pill.active { background: rgba(88,166,255,.15); border-color: var(--accent); color: var(--accent); }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { border-bottom: 1px solid var(--border); padding: 10px 8px; text-align: left; }
   th { color: var(--muted); font-weight: 600; font-size: 12px; }
@@ -105,23 +108,46 @@
     <!-- SEARCH TAB -->
     <section id="tab-search" class="hidden">
       <div class="card">
-        <h3 id="search-heading" style="margin-top:0;"></h3>
+        <h3 id="search-heading" style="margin-top:0; margin-bottom:12px;"></h3>
         <div class="row" style="margin-bottom:12px;">
           <input id="q-input" value="" style="flex:1;">
-          <input id="q-limit" type="number" value="10" min="1" max="50" style="width:80px;">
+          <select id="q-limit" style="width:110px;">
+            <option value="5">5 offers</option>
+            <option value="10" selected>10 offers</option>
+            <option value="20">20 offers</option>
+          </select>
         </div>
-        <div class="row" style="margin-bottom:14px;">
-          <label><input type="checkbox" id="src-li" checked> LinkedIn</label>
-          <label><input type="checkbox" id="src-hw" checked> HelloWork</label>
-          <label><input type="checkbox" id="opt-easy" checked> <span id="lbl-easy">Easy Apply only (LinkedIn)</span></label>
-          <label><input type="checkbox" id="opt-skip-ext" checked> <span id="lbl-skip-ext">Skip external portals</span></label>
+        <div class="row" style="margin-bottom:14px; justify-content:space-between;">
+          <div class="pill-group">
+            <button class="pill active" id="pill-li" onclick="this.classList.toggle('active')">LinkedIn (Easy Apply)</button>
+            <button class="pill" id="pill-hw" onclick="this.classList.toggle('active')">HelloWork</button>
+            <button class="pill active" id="pill-skip" onclick="this.classList.toggle('active')"><span id="lbl-skip-ext"></span></button>
+          </div>
+          <div class="pill-group">
+            <button class="pill active" id="mode-auto" onclick="setRunMode('auto')"><span id="lbl-m-auto"></span></button>
+            <button class="pill" id="mode-apply" onclick="setRunMode('apply')"><span id="lbl-m-apply"></span></button>
+            <button class="pill" id="mode-search" onclick="setRunMode('search')"><span id="lbl-m-search"></span></button>
+          </div>
         </div>
         <div class="row">
-          <button class="secondary" id="btn-batch-search" onclick="runBatch('search')"></button>
-          <button class="primary" id="btn-batch-apply" onclick="runBatch('apply')"></button>
-          <button class="secondary" id="btn-batch-auto" onclick="runBatch('auto')"></button>
+          <button class="primary" id="btn-launch" onclick="launchSearch()"></button>
+          <button class="secondary" id="btn-mail" onclick="runMail()"></button>
         </div>
       </div>
+
+      <div class="card">
+        <div class="row" style="justify-content:space-between;">
+          <div>
+            <strong id="retry-heading"></strong>
+            <div id="retry-desc" style="font-size:12px; color:var(--muted); margin-top:2px;"></div>
+          </div>
+          <div class="row">
+            <button class="secondary" id="btn-retry-drafted" onclick="runRetry('drafted')"></button>
+            <button class="secondary" id="btn-retry-manual" onclick="runRetry('manual_portal')"></button>
+          </div>
+        </div>
+      </div>
+
       <div class="card">
         <div class="row" style="justify-content:space-between; margin-bottom:8px;">
           <strong id="lbl-logs"></strong>
@@ -204,8 +230,12 @@ const I18N = {
     thDate: "Date", thSource: "Source", thCompany: "Entreprise", thRole: "Poste", thStatus: "Statut", thDocs: "Documents", thActions: "Actions",
     viewPdf: "Voir PDF", applyBtn: "Postuler",
     searchHeading: "Lancer une recherche de stages",
-    easyApply: "Candidature simplifiée uniquement (LinkedIn)", skipExternal: "Ignorer portails externes manuels",
-    btnSearch: "1. Chercher & Générer CV/LM", btnApply: "2. Lancer File Manuelle (Chrome)", btnAuto: "3. Mode Auto (--auto)",
+    skipExternal: "Ignorer portails externes",
+    mAuto: "Auto-Apply", mApply: "Revue Manuelle", mSearch: "Brouillons PDF seuls",
+    btnLaunch: "Lancer la recherche", btnMail: "Emails spontanés locaux",
+    retryHeading: "Réessayer les offres déjà récupérées",
+    retryDesc: "Relancez les offres en attente sans re-scraper le web.",
+    retryDrafted: "Réessayer Brouillons", retryManual: "Réessayer Portails Manuels",
     logs: "Logs en direct", idle: "Inactif", running: "En cours...", done: "Terminé", ready: "Prêt.",
     previewEmpty: "Sélectionnez une candidature dans l'onglet Candidatures",
     masterTitle: "Profil Maître & Dépôts GitHub Vérifiés", syncBtn: "Synchroniser GitHub",
@@ -236,8 +266,12 @@ const I18N = {
     thDate: "Fecha", thSource: "Fuente", thCompany: "Empresa", thRole: "Puesto", thStatus: "Estado", thDocs: "Documentos", thActions: "Acciones",
     viewPdf: "Ver PDF", applyBtn: "Postular",
     searchHeading: "Buscar prácticas (stages)",
-    easyApply: "Solo Solicitud Sencilla (LinkedIn)", skipExternal: "Omitir portales externos manuales",
-    btnSearch: "1. Buscar y Generar CV/Carta", btnApply: "2. Cola Manual (Chrome)", btnAuto: "3. Modo Auto (--auto)",
+    skipExternal: "Omitir portales externos",
+    mAuto: "Auto-Postular", mApply: "Revisión Manual", mSearch: "Solo generar PDFs",
+    btnLaunch: "Iniciar búsqueda", btnMail: "Emails espontáneos locales",
+    retryHeading: "Reintentar ofertas ya guardadas",
+    retryDesc: "Vuelve a intentar ofertas pendientes sin volver a buscar.",
+    retryDrafted: "Reintentar Borradores", retryManual: "Reintentar Portales Manuales",
     logs: "Registros en vivo", idle: "Inactivo", running: "Ejecutando...", done: "Finalizado", ready: "Listo.",
     previewEmpty: "Selecciona una candidatura en la pestaña Candidaturas",
     masterTitle: "Perfil Maestro y Repositorios GitHub Verificados", syncBtn: "Sincronizar GitHub",
@@ -268,8 +302,12 @@ const I18N = {
     thDate: "Date", thSource: "Source", thCompany: "Company", thRole: "Role", thStatus: "Status", thDocs: "Documents", thActions: "Actions",
     viewPdf: "View PDF", applyBtn: "Apply",
     searchHeading: "Search for internships",
-    easyApply: "Easy Apply only (LinkedIn)", skipExternal: "Skip external manual portals",
-    btnSearch: "1. Search & Generate CV/LM", btnApply: "2. Manual Review Queue (Chrome)", btnAuto: "3. Auto Mode (--auto)",
+    skipExternal: "Skip external portals",
+    mAuto: "Auto-Apply", mApply: "Manual Review", mSearch: "Draft PDFs only",
+    btnLaunch: "Launch Search", btnMail: "Local Spontaneous Emails",
+    retryHeading: "Retry already-fetched offers",
+    retryDesc: "Re-run pending offers without scraping again.",
+    retryDrafted: "Retry Drafts", retryManual: "Retry Manual Portals",
     logs: "Live Logs", idle: "Idle", running: "Running...", done: "Done", ready: "Ready.",
     previewEmpty: "Select an application from the Applications tab",
     masterTitle: "Master Profile & Verified GitHub Repos", syncBtn: "Sync GitHub",
@@ -296,7 +334,16 @@ const I18N = {
 
 let currentLang = localStorage.getItem('stagebot_lang') || 'fr';
 let currentTab = 'guide';
+let runMode = 'auto';
 let allRows = [];
+let countsCache = {drafted: 0, manual_portal: 0};
+
+function setRunMode(mode) {
+  runMode = mode;
+  ['auto', 'apply', 'search'].forEach(m => {
+    document.getElementById('mode-' + m).classList.toggle('active', m === mode);
+  });
+}
 
 function setLang(lang) {
   currentLang = I18N[lang] ? lang : 'fr';
@@ -325,11 +372,16 @@ function setLang(lang) {
   document.getElementById('th-docs').textContent = t.thDocs;
   document.getElementById('th-actions').textContent = t.thActions;
   document.getElementById('search-heading').textContent = t.searchHeading;
-  document.getElementById('lbl-easy').textContent = t.easyApply;
   document.getElementById('lbl-skip-ext').textContent = t.skipExternal;
-  document.getElementById('btn-batch-search').textContent = t.btnSearch;
-  document.getElementById('btn-batch-apply').textContent = t.btnApply;
-  document.getElementById('btn-batch-auto').textContent = t.btnAuto;
+  document.getElementById('lbl-m-auto').textContent = t.mAuto;
+  document.getElementById('lbl-m-apply').textContent = t.mApply;
+  document.getElementById('lbl-m-search').textContent = t.mSearch;
+  document.getElementById('btn-launch').textContent = t.btnLaunch;
+  document.getElementById('btn-mail').textContent = t.btnMail;
+  document.getElementById('retry-heading').textContent = t.retryHeading;
+  document.getElementById('retry-desc').textContent = t.retryDesc;
+  document.getElementById('btn-retry-drafted').textContent = `${t.retryDrafted} (${countsCache.drafted || 0})`;
+  document.getElementById('btn-retry-manual').textContent = `${t.retryManual} (${countsCache.manual_portal || 0})`;
   document.getElementById('lbl-logs').textContent = t.logs;
   document.getElementById('run-state').textContent = t.idle;
   if (!document.getElementById('pdf-cv').src) {
@@ -375,6 +427,10 @@ async function loadApps() {
   document.getElementById('st-applied').textContent = data.counts.applied;
   document.getElementById('st-drafted').textContent = data.counts.drafted;
   document.getElementById('st-manual').textContent = data.counts.manual_portal;
+  countsCache = data.counts;
+  const t = I18N[currentLang];
+  document.getElementById('btn-retry-drafted').textContent = `${t.retryDrafted} (${countsCache.drafted || 0})`;
+  document.getElementById('btn-retry-manual').textContent = `${t.retryManual} (${countsCache.manual_portal || 0})`;
   renderTable();
 }
 
@@ -446,18 +502,40 @@ async function openInChrome(cvEnc, urlEnc) {
   pollLogs();
 }
 
-async function runBatch(action) {
+async function launchSearch() {
   const queries = document.getElementById('q-input').value.split(',').map(s=>s.trim()).filter(Boolean);
   const limit = parseInt(document.getElementById('q-limit').value || '10', 10);
   const sources = [];
-  if (document.getElementById('src-li').checked) sources.push('linkedin');
-  if (document.getElementById('src-hw').checked) sources.push('hellowork');
-  const easy_apply = document.getElementById('opt-easy').checked;
-  const skip_external = document.getElementById('opt-skip-ext').checked;
+  const liOn = document.getElementById('pill-li').classList.contains('active');
+  const hwOn = document.getElementById('pill-hw').classList.contains('active');
+  if (liOn) sources.push('linkedin');
+  if (hwOn) sources.push('hellowork');
+  if (!sources.length) sources.push('linkedin');
+  const skip_external = document.getElementById('pill-skip').classList.contains('active');
   await fetch('/api/run', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({action, limit, queries, sources, easy_apply, skip_external})
+    body: JSON.stringify({action: runMode, limit, queries, sources, easy_apply: liOn, skip_external})
+  });
+  pollLogs();
+}
+
+async function runRetry(retry_status) {
+  const limit = parseInt(document.getElementById('q-limit').value || '10', 10);
+  const skip_external = document.getElementById('pill-skip').classList.contains('active');
+  await fetch('/api/run', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'retry', retry_status, limit, auto: runMode === 'auto', skip_external})
+  });
+  pollLogs();
+}
+
+async function runMail() {
+  await fetch('/api/run', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'mail', limit: 5})
   });
   pollLogs();
 }
