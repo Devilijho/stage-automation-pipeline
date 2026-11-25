@@ -540,12 +540,11 @@ async function launchFetch() {
 }
 
 async function runRetry(retry_status) {
-  const limit = parseInt(document.getElementById('q-limit').value || '10', 10);
-  const skip_external = document.getElementById('pill-skip').classList.contains('active');
+  const skip_external = retry_status === 'manual_portal' ? false : document.getElementById('pill-skip').classList.contains('active');
   await fetch('/api/run', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({action:'retry', retry_status, limit, auto: runMode === 'auto', skip_external})
+    body: JSON.stringify({action:'retry', retry_status, limit: 200, auto: runMode === 'auto', skip_external})
   });
   pollLogs();
 }

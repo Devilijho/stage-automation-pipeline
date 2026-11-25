@@ -498,6 +498,8 @@ async def find_submit_button(page: Page):
         "button:has-text('Envoyer')",
         "button:has-text('Soumettre')",
         "button:has-text('Submit')",
+        "form button[type='submit']:visible",
+        "form input[type='submit']:visible",
     ]
     for sel in sub_selectors:
         try:
