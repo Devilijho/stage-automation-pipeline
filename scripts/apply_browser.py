@@ -415,10 +415,74 @@ def check_submission_confirmed(page: Page) -> bool:
         return False
 
 
+def get_label_text(page: Page, el) -> str:
+    """Extract label/aria/placeholder text for a form element."""
+    parts = []
+    for attr in ("aria-label", "placeholder", "name", "id"):
+        val = el.get_attribute(attr)
+        if val:
+            parts.append(val)
+    el_id = el.get_attribute("id")
+    if el_id:
+        try:
+            lbl = page.locator(f"label[for='{el_id}']").first
+            if lbl.count() > 0:
+                parts.append(lbl.inner_text())
+        except Exception:
+            pass
+    try:
+        # LinkedIn wraps question text in ancestor .fb-dash-form-element or label
+        parent_lbl = el.locator("xpath=ancestor::div[contains(@class,'fb-dash-form-element') or contains(@class,'jobs-easy-apply-form-element')][1]").first
+        if parent_lbl.count() > 0:
+            parts.append(parent_lbl.inner_text())
+    except Exception:
+        pass
+    return " ".join(parts).lower()
+
+
 def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[str]:
-    """Handle common LinkedIn Easy Apply <select> dropdowns, Oui/Yes radios, and numeric inputs."""
+    """Handle LinkedIn Easy Apply text/number questions, <select> dropdowns, radios, and checkboxes."""
     answered: List[str] = []
-    # 1. Select dropdowns (e.g. country code, Oui/Yes, English/French proficiency)
+
+    # 1. Text & numeric screening inputs (experience years, dates, duration, salary)
+    try:
+        inputs = page.locator("input:visible, textarea:visible")
+        for i in range(inputs.count()):
+            el = inputs.nth(i)
+            try:
+                itype = (el.get_attribute("type") or "text").lower()
+                if itype in {"hidden", "file", "submit", "button", "checkbox", "radio"}:
+                    continue
+                if (el.input_value() or "").strip():
+                    continue
+                q = get_label_text(page, el)
+                is_num = itype == "number" or "numeric" in (el.get_attribute("inputmode") or "")
+
+                val = ""
+                if any(k in q for k in ("année", "années", "years", "combien d'exp", "how long", "how many years")):
+                    val = "1"
+                elif any(k in q for k in ("durée", "duration", "combien de mois", "months")):
+                    val = "3" if is_num else answers.get("duree", "3 mois")
+                elif any(k in q for k in ("date de début", "start date", "quand pouvez", "when can you", "disponib")):
+                    val = "2026-05-03" if itype == "date" else "03/05/2026"
+                elif any(k in q for k in ("salaire", "rémunération", "gratification", "salary", "compensation")):
+                    val = "800" if is_num else "Gratification légale"
+                elif any(k in q for k in ("ville", "city", "localisation")):
+                    val = answers.get("ville", "Bures-sur-Yvette")
+                elif is_num:
+                    val = "1"
+
+                if val:
+                    el.fill(val)
+                    answered.append(f"input -> {val}")
+                elif q.strip():
+                    print(f"  [?] Unanswered input: {q.strip()[:90]}")
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # 2. Select dropdowns (country code, Oui/Yes, English/French proficiency, education)
     try:
         selects = page.locator("select:visible")
         for i in range(selects.count()):
@@ -427,8 +491,15 @@ def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[str]:
                 cur = (sel.input_value() or "").strip()
                 if cur and cur.lower() not in {"select an option", "sélectionner une option", ""}:
                     continue
+                q = get_label_text(page, sel)
                 opts = [o.inner_text().strip() for o in sel.locator("option").all()]
-                for target in ("Oui", "Yes", "France (+33)", "C1", "Courant", "Fluent", "Bac+2"):
+                prefer_no = any(k in q for k in ("visa", "sponsor", "handicap"))
+                targets = (
+                    ("Non", "No")
+                    if prefer_no
+                    else ("Oui", "Yes", "France (+33)", "C1", "Courant", "Fluent", "Bac+2", "Bac +2")
+                )
+                for target in targets:
                     match = next((o for o in opts if target.lower() in o.lower()), None)
                     if match:
                         sel.select_option(label=match)
@@ -439,7 +510,7 @@ def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[str]:
     except Exception:
         pass
 
-    # 2. Radio groups asking Oui/Yes (e.g., work authorization, sponsorship)
+    # 3. Radio groups (Oui/Yes for authorization/convention, Non/No for visa/sponsorship)
     try:
         fieldsets = page.locator("fieldset:visible")
         for i in range(fieldsets.count()):
@@ -448,13 +519,37 @@ def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[str]:
                 if fs.locator("input[type='radio']:checked").count() > 0:
                     continue
                 legend = fs.inner_text().lower()
-                if any(k in legend for k in ("autoris", "légale", "work", "france", "stage", "convention", "disponib")):
-                    for lbl_txt in ("Oui", "Yes"):
-                        lbl = fs.locator(f"label:has-text('{lbl_txt}')").first
-                        if lbl.count() > 0 and lbl.is_visible(timeout=300):
-                            lbl.click()
-                            answered.append(f"radio -> {lbl_txt}")
-                            break
+                if any(k in legend for k in ("visa", "sponsor")):
+                    choices = ("Non", "No")
+                elif any(k in legend for k in ("autoris", "légale", "work", "france", "stage", "convention", "disponib", "majeur", "bac+", "hybride", "présentiel")):
+                    choices = ("Oui", "Yes")
+                else:
+                    print(f"  [?] Unanswered radio: {legend.strip()[:90]}")
+                    continue
+
+                for lbl_txt in choices:
+                    lbl = fs.locator(f"label:has-text('{lbl_txt}')").first
+                    if lbl.count() > 0 and lbl.is_visible(timeout=300):
+                        lbl.click()
+                        answered.append(f"radio -> {lbl_txt}")
+                        break
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # 4. Required privacy/terms checkboxes (never check marketing/newsletter)
+    try:
+        cbs = page.locator("input[type='checkbox']:visible")
+        for i in range(cbs.count()):
+            cb = cbs.nth(i)
+            try:
+                if cb.is_checked():
+                    continue
+                q = get_label_text(page, cb)
+                if any(k in q for k in ("politique", "confidentialité", "privacy", "conditions", "terms", "certifie", "exact")):
+                    cb.check(force=True)
+                    answered.append("checkbox -> accepted terms")
             except Exception:
                 continue
     except Exception:
