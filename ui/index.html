@@ -40,6 +40,8 @@
   pre.log { background: #010409; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 12px; height: 220px; overflow-y: auto; color: #c9d1d9; margin: 0; white-space: pre-wrap; }
   .pdf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; height: 72vh; }
   iframe.pdf { width: 100%; height: 100%; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+  .dirty-row { background: rgba(210,153,34,.08); }
+  .dirty-input { border-color: #d29922 !important; box-shadow: 0 0 0 1px rgba(210,153,34,.35); }
   .hidden { display: none; }
 </style>
 </head>
@@ -53,6 +55,7 @@
   <button class="nav-btn" id="nav-tracker" onclick="showTab('tracker', this)"></button>
   <button class="nav-btn" id="nav-preview" onclick="showTab('preview', this)"></button>
   <button class="nav-btn" id="nav-profile" onclick="showTab('profile', this)"></button>
+  <button class="nav-btn" id="nav-questions" onclick="showTab('questions', this)"></button>
   <div class="stats" id="stats-box">
     <div><span id="lbl-total">Total</span>: <strong id="st-total">0</strong></div>
     <div><span id="lbl-applied">Sent</span>: <strong id="st-applied">0</strong></div>
@@ -194,6 +197,81 @@
       </div>
     </section>
 
+    <!-- Q&A & RULES TAB -->
+    <section id="tab-questions" class="hidden">
+      <div class="card">
+        <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+          <div>
+            <strong>Unanswered &amp; Custom Questions</strong>
+            <span style="font-size:12px; color:var(--muted); margin-left:8px;">(data/unanswered_questions.json)</span>
+          </div>
+          <div class="row">
+            <select id="qa-filter" onchange="renderUnanswered()">
+              <option value="all">All</option>
+              <option value="missing">Missing only</option>
+              <option value="answered">Answered only</option>
+            </select>
+            <button class="secondary" onclick="loadQuestions()">Refresh</button>
+            <button class="primary" onclick="saveUnansweredQuestions()">Save Answers</button>
+          </div>
+        </div>
+        <div id="qa-save-status" style="font-size:12px; color:var(--accent); margin-bottom:8px;"></div>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Question</th>
+                <th>Options</th>
+                <th>Company</th>
+                <th style="min-width:220px;">Answer</th>
+              </tr>
+            </thead>
+            <tbody id="qa-unanswered-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+          <div>
+            <strong>Auto-Filled Profile Answers</strong>
+            <span style="font-size:12px; color:var(--muted); margin-left:8px;">(config/profile.json → form_answers)</span>
+          </div>
+          <button class="primary" onclick="saveFormAnswers()">Save Profile Answers</button>
+        </div>
+        <div id="fa-save-status" style="font-size:12px; color:var(--accent); margin-bottom:8px;"></div>
+        <div id="qa-form-answers-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:10px;"></div>
+      </div>
+
+      <div class="card">
+        <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+          <div>
+            <strong>Custom Keyword Rules</strong>
+            <span style="font-size:12px; color:var(--muted); margin-left:8px;">(config/profile.json → custom_rules)</span>
+          </div>
+          <div class="row">
+            <button class="secondary" onclick="addCustomRule()">+ Add Rule</button>
+            <button class="primary" onclick="saveCustomRules()">Save Rules</button>
+          </div>
+        </div>
+        <div id="cr-save-status" style="font-size:12px; color:var(--accent); margin-bottom:8px;"></div>
+        <table>
+          <thead><tr><th>Keyword (substring match)</th><th>Answer</th><th style="width:60px;"></th></tr></thead>
+          <tbody id="qa-custom-rules-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <strong style="display:block; margin-bottom:10px;">Built-in Playwright Rules &amp; Verified Skills (master_profile.md)</strong>
+        <table>
+          <thead><tr><th>Outcome</th><th>Rule / Trigger</th></tr></thead>
+          <tbody id="qa-rules-tbody"></tbody>
+        </table>
+        <div id="qa-skills-list" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:12px;"></div>
+      </div>
+    </section>
+
     <!-- GUIDE / TUTORIAL TAB -->
     <section id="tab-guide">
       <div class="card">
@@ -270,7 +348,7 @@ const I18N = {
     gS5T: "Étape 5 — Exporter le justificatif pour l'IUT",
     gS5D: "Génère un rapport imprimable avec toutes vos candidatures, dates, URLs et documents envoyés pour votre responsable de stage.",
     gS5Btn: "Ouvrir le Justificatif Université",
-    titles: {guide:"1. Intro & Démarrer", fetch:"2. Chercher Offres", apply:"3. Postuler", tracker:"4. Candidatures", preview:"5. Aperçu CV & LM", profile:"6. Profil & GitHub"}
+    titles: {guide:"1. Intro & Démarrer", fetch:"2. Chercher Offres", apply:"3. Postuler", tracker:"4. Candidatures", preview:"5. Aperçu CV & LM", profile:"6. Profil & GitHub", questions:"7. Questions & Règles"}
   },
   es: {
     navGuide: "1. Intro y Guía", navFetch: "2. Buscar Ofertas", navApply: "3. Postular", navTracker: "4. Candidaturas", navPreview: "5. Vista CV y Carta", navProfile: "6. Perfil y GitHub",
@@ -308,7 +386,7 @@ const I18N = {
     gS5T: "Paso 5 — Exportar justificante para la universidad",
     gS5D: "Genera un informe imprimible con todas tus ofertas, fechas, enlaces y documentos enviados para mostrar en la IUT.",
     gS5Btn: "Abrir Justificante Universidad",
-    titles: {guide:"1. Intro y Guía", fetch:"2. Buscar Ofertas", apply:"3. Postular", tracker:"4. Candidaturas", preview:"5. Vista CV y Carta", profile:"6. Perfil y GitHub"}
+    titles: {guide:"1. Intro y Guía", fetch:"2. Buscar Ofertas", apply:"3. Postular", tracker:"4. Candidaturas", preview:"5. Vista CV y Carta", profile:"6. Perfil y GitHub", questions:"7. Preguntas y Reglas"}
   },
   en: {
     navGuide: "1. Intro & Guide", navFetch: "2. Fetch Offers", navApply: "3. Apply", navTracker: "4. Applications", navPreview: "5. CV & Letter Preview", navProfile: "6. Profile & GitHub",
@@ -346,7 +424,7 @@ const I18N = {
     gS5T: "Step 5 — Export University Proof Report",
     gS5D: "Generates a printable report of all applications, dates, URLs, and attached PDFs to show your university coordinator.",
     gS5Btn: "Open University Report",
-    titles: {guide:"1. Intro & Guide", fetch:"2. Fetch Offers", apply:"3. Apply", tracker:"4. Applications", preview:"5. CV & Letter Preview", profile:"6. Profile & GitHub"}
+    titles: {guide:"1. Intro & Guide", fetch:"2. Fetch Offers", apply:"3. Apply", tracker:"4. Applications", preview:"5. CV & Letter Preview", profile:"6. Profile & GitHub", questions:"7. Q&A & Rules"}
   }
 };
 
@@ -375,6 +453,7 @@ function setLang(lang) {
   document.getElementById('nav-tracker').textContent = t.navTracker;
   document.getElementById('nav-preview').textContent = t.navPreview;
   document.getElementById('nav-profile').textContent = t.navProfile;
+  document.getElementById('nav-questions').textContent = t.titles.questions;
   document.getElementById('lbl-total').textContent = t.total;
   document.getElementById('lbl-applied').textContent = t.applied;
   document.getElementById('lbl-drafted').textContent = t.drafted;
@@ -438,6 +517,7 @@ function showTab(name, btn) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   document.getElementById('page-title').textContent = I18N[currentLang].titles[name] || 'StageBot';
+  if (name === 'questions') loadQuestions();
 }
 
 async function loadApps() {
@@ -608,6 +688,7 @@ async function pollLogs() {
     if (!data.running) {
       clearInterval(pollTimer);
       loadApps();
+      loadQuestions();
     }
   };
   await tick();
@@ -630,9 +711,283 @@ async function loadProfile() {
   }
 }
 
+let qaData = {unanswered: [], form_answers: {}, custom_rules: [], verified_skills: [], builtin_rules: []};
+let dirtyUnanswered = new Set();
+
+async function loadQuestions() {
+  const statusEl = document.getElementById('qa-save-status');
+  try {
+    const res = await fetch('/api/questions');
+    if (!res.ok) {
+      statusEl.textContent = `Error ${res.status}: Restart StageBot UI server so /api/questions is active.`;
+      return;
+    }
+    qaData = await res.json();
+    dirtyUnanswered.clear();
+    statusEl.textContent = '';
+    document.getElementById('fa-save-status').textContent = '';
+    document.getElementById('cr-save-status').textContent = '';
+  } catch (e) {
+    statusEl.textContent = 'Failed to reach /api/questions — restart StageBot UI server.';
+    return;
+  }
+  renderUnanswered();
+  renderCustomRules();
+
+  const grid = document.getElementById('qa-form-answers-grid');
+  grid.innerHTML = '';
+  for (const [k, v] of Object.entries(qaData.form_answers || {})) {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex; flex-direction:column; gap:4px;';
+    const lbl = document.createElement('label');
+    lbl.textContent = k;
+    lbl.style.cssText = 'font-size:12px; color:var(--muted);';
+    const inp = document.createElement('input');
+    inp.value = v || '';
+    inp.dataset.faKey = k;
+    inp.oninput = () => {
+      inp.classList.add('dirty-input');
+      document.getElementById('fa-save-status').textContent = 'Unsaved profile changes.';
+    };
+    wrap.appendChild(lbl);
+    wrap.appendChild(inp);
+    grid.appendChild(wrap);
+  }
+
+  const rulesBody = document.getElementById('qa-rules-tbody');
+  rulesBody.innerHTML = '';
+  for (const r of (qaData.builtin_rules || [])) {
+    const tr = document.createElement('tr');
+    const td1 = document.createElement('td');
+    td1.innerHTML = `<strong>${r.category}</strong>`;
+    const td2 = document.createElement('td');
+    td2.textContent = r.rule;
+    tr.appendChild(td1);
+    tr.appendChild(td2);
+    rulesBody.appendChild(tr);
+  }
+
+  const skillsEl = document.getElementById('qa-skills-list');
+  skillsEl.innerHTML = '';
+  for (const sk of (qaData.verified_skills || [])) {
+    const span = document.createElement('span');
+    span.textContent = sk;
+    span.style.cssText = 'font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--border); color:var(--muted);';
+    skillsEl.appendChild(span);
+  }
+}
+
+function renderUnanswered() {
+  const filter = document.getElementById('qa-filter').value;
+  const tbody = document.getElementById('qa-unanswered-tbody');
+  tbody.innerHTML = '';
+  const items = qaData.unanswered || [];
+  let shown = 0;
+  items.forEach((item, idx) => {
+    const hasAns = Boolean((item.answer || '').trim());
+    if (filter === 'missing' && hasAns) return;
+    if (filter === 'answered' && !hasAns) return;
+    shown++;
+    const tr = document.createElement('tr');
+    if (dirtyUnanswered.has(idx)) tr.classList.add('dirty-row');
+
+    const tdType = document.createElement('td');
+    tdType.textContent = item.field_type || '';
+    tdType.style.color = 'var(--muted)';
+
+    const tdQ = document.createElement('td');
+    tdQ.textContent = item.question || '';
+
+    const tdOpts = document.createElement('td');
+    (item.options || []).forEach(opt => {
+      const chip = document.createElement('button');
+      chip.className = 'secondary';
+      chip.textContent = opt;
+      chip.style.cssText = 'font-size:11px; padding:2px 7px; margin:2px;';
+      chip.onclick = () => {
+        qaData.unanswered[idx].answer = opt;
+        dirtyUnanswered.add(idx);
+        document.getElementById('qa-save-status').textContent = 'Unsaved answer changes.';
+        renderUnanswered();
+      };
+      tdOpts.appendChild(chip);
+    });
+
+    const tdComp = document.createElement('td');
+    tdComp.textContent = item.company || '';
+    tdComp.style.color = 'var(--muted)';
+
+    const tdAns = document.createElement('td');
+    tdAns.style.cssText = 'display:flex; gap:6px; align-items:center;';
+    const inp = document.createElement('input');
+    inp.value = item.answer || '';
+    inp.placeholder = 'Enter answer...';
+    inp.style.flex = '1';
+    if (dirtyUnanswered.has(idx)) inp.classList.add('dirty-input');
+    inp.oninput = (e) => {
+      qaData.unanswered[idx].answer = e.target.value;
+      dirtyUnanswered.add(idx);
+      tr.classList.add('dirty-row');
+      inp.classList.add('dirty-input');
+      document.getElementById('qa-save-status').textContent = 'Unsaved answer changes.';
+    };
+    const ruleBtn = document.createElement('button');
+    ruleBtn.className = 'secondary';
+    ruleBtn.textContent = '+ Rule';
+    ruleBtn.title = 'Promote to reusable custom rule';
+    ruleBtn.style.padding = '4px 8px';
+    ruleBtn.onclick = () => promoteToRule(idx);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'secondary';
+    delBtn.textContent = '✕';
+    delBtn.title = 'Remove';
+    delBtn.style.padding = '4px 8px';
+    delBtn.onclick = () => {
+      qaData.unanswered.splice(idx, 1);
+      dirtyUnanswered.add(-1);
+      document.getElementById('qa-save-status').textContent = 'Unsaved answer changes.';
+      renderUnanswered();
+    };
+    tdAns.appendChild(inp);
+    tdAns.appendChild(ruleBtn);
+    tdAns.appendChild(delBtn);
+
+    tr.appendChild(tdType);
+    tr.appendChild(tdQ);
+    tr.appendChild(tdOpts);
+    tr.appendChild(tdComp);
+    tr.appendChild(tdAns);
+    tbody.appendChild(tr);
+  });
+  if (shown === 0) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="5" style="color:var(--muted); text-align:center;">No questions logged yet.</td>';
+    tbody.appendChild(tr);
+  }
+}
+
+async function saveUnansweredQuestions() {
+  const res = await fetch('/api/questions', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({type: 'unanswered', items: qaData.unanswered || []})
+  });
+  const data = await res.json();
+  if (data.ok) {
+    dirtyUnanswered.clear();
+    renderUnanswered();
+  }
+  document.getElementById('qa-save-status').textContent = data.ok ? 'Saved to data/unanswered_questions.json!' : 'Save failed.';
+}
+
+async function saveFormAnswers() {
+  const updated = {};
+  document.querySelectorAll('#qa-form-answers-grid input[data-fa-key]').forEach(inp => {
+    updated[inp.dataset.faKey] = inp.value;
+    inp.classList.remove('dirty-input');
+  });
+  const res = await fetch('/api/questions', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({type: 'form_answers', form_answers: updated})
+  });
+  const data = await res.json();
+  document.getElementById('fa-save-status').textContent = data.ok ? 'Saved to config/profile.json!' : 'Save failed.';
+}
+
+function renderCustomRules() {
+  const tbody = document.getElementById('qa-custom-rules-tbody');
+  tbody.innerHTML = '';
+  const rules = qaData.custom_rules || [];
+  rules.forEach((rule, idx) => {
+    const tr = document.createElement('tr');
+    const tdKw = document.createElement('td');
+    const inpKw = document.createElement('input');
+    inpKw.value = rule.keyword || '';
+    inpKw.placeholder = 'e.g. permis b';
+    inpKw.style.width = '100%';
+    inpKw.oninput = (e) => {
+      qaData.custom_rules[idx].keyword = e.target.value;
+      inpKw.classList.add('dirty-input');
+      document.getElementById('cr-save-status').textContent = 'Unsaved rule changes.';
+    };
+    tdKw.appendChild(inpKw);
+
+    const tdAns = document.createElement('td');
+    const inpAns = document.createElement('input');
+    inpAns.value = rule.answer || '';
+    inpAns.placeholder = 'e.g. Non';
+    inpAns.style.width = '100%';
+    inpAns.oninput = (e) => {
+      qaData.custom_rules[idx].answer = e.target.value;
+      inpAns.classList.add('dirty-input');
+      document.getElementById('cr-save-status').textContent = 'Unsaved rule changes.';
+    };
+    tdAns.appendChild(inpAns);
+
+    const tdDel = document.createElement('td');
+    const delBtn = document.createElement('button');
+    delBtn.className = 'secondary';
+    delBtn.textContent = '✕';
+    delBtn.style.padding = '4px 8px';
+    delBtn.onclick = () => {
+      qaData.custom_rules.splice(idx, 1);
+      document.getElementById('cr-save-status').textContent = 'Unsaved rule changes.';
+      renderCustomRules();
+    };
+    tdDel.appendChild(delBtn);
+
+    tr.appendChild(tdKw);
+    tr.appendChild(tdAns);
+    tr.appendChild(tdDel);
+    tbody.appendChild(tr);
+  });
+  if (rules.length === 0) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="3" style="color:var(--muted); text-align:center;">No custom rules yet. Click + Add Rule or promote an answered question.</td>';
+    tbody.appendChild(tr);
+  }
+}
+
+function addCustomRule(keyword = '', answer = '') {
+  qaData.custom_rules = qaData.custom_rules || [];
+  qaData.custom_rules.push({keyword, answer});
+  document.getElementById('cr-save-status').textContent = 'Unsaved rule changes.';
+  renderCustomRules();
+}
+
+async function promoteToRule(idx) {
+  const item = qaData.unanswered[idx];
+  const ans = (item.answer || '').trim();
+  if (!ans) {
+    document.getElementById('qa-save-status').textContent = 'Enter an answer first before promoting to a rule.';
+    return;
+  }
+  const kw = prompt('Keyword to match in future questions:', (item.question || '').toLowerCase());
+  if (!kw || !kw.trim()) return;
+  addCustomRule(kw.trim(), ans);
+  await saveCustomRules();
+}
+
+async function saveCustomRules() {
+  const res = await fetch('/api/questions', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({type: 'custom_rules', custom_rules: qaData.custom_rules || []})
+  });
+  const data = await res.json();
+  if (data.ok) {
+    qaData.custom_rules = data.custom_rules || qaData.custom_rules;
+    renderCustomRules();
+  }
+  document.getElementById('cr-save-status').textContent = data.ok ? 'Saved rules to config/profile.json!' : 'Save failed.';
+}
+
 setLang(currentLang);
 loadApps();
 loadProfile();
+loadQuestions();
 </script>
 </body>
 </html>

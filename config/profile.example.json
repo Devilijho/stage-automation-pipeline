@@ -61,5 +61,8 @@
     "linkedin": "https://www.linkedin.com/in/your-profile",
     "autorisation_travail": "Oui",
     "mobilite": "Île-de-France / Télétravail"
-  }
+  },
+  "custom_rules": [
+    {"keyword": "permis b", "answer": "Non"}
+  ]
 }

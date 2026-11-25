@@ -500,14 +500,21 @@ def check_and_log_application(
             writer.writerows(rows)
 
     norm_url = url.strip().rstrip("/").lower()
+    def _norm_pair(c: str, ro: str) -> Tuple[str, str]:
+        c_n = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", (c or "").lower())).strip()
+        r_n = re.sub(r"\b(h\s*/\s*f|f\s*/\s*h|h\s*/\s*f\s*/\s*x|x\s*/\s*f\s*/\s*m|m\s*/\s*f)\b", " ", (ro or "").lower())
+        r_n = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", r_n)).strip()
+        return c_n, r_n
+
+    target_pair = _norm_pair(company, role)
     for r in rows:
         existing_url = (r.get("URL") or "").strip().rstrip("/").lower()
         if norm_url and existing_url == norm_url and not force:
             return False
         if (
-            not norm_url
-            and (r.get("Company") or "").strip().lower() == company.lower()
-            and (r.get("Role") or "").strip().lower() == role.lower()
+            target_pair[0]
+            and target_pair[1]
+            and _norm_pair(r.get("Company") or "", r.get("Role") or "") == target_pair
             and not force
         ):
             return False

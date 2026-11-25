@@ -18,9 +18,10 @@ import argparse
 import asyncio
 import csv
 import json
+import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(line_buffering=True)
@@ -29,7 +30,9 @@ from playwright.async_api import BrowserContext, Page, TimeoutError as Playwrigh
 
 WORKSPACE = Path(__file__).resolve().parent.parent
 PROFILE_PATH = WORKSPACE / "config" / "profile.json"
+MASTER_PROFILE_PATH = WORKSPACE / "config" / "master_profile.md"
 APPS_CSV_PATH = WORKSPACE / "data" / "applications.csv"
+UNANSWERED_QUESTIONS_PATH = WORKSPACE / "data" / "unanswered_questions.json"
 CHROME_PROFILE_DIR = WORKSPACE / ".chrome_profile"
 
 CONFIRMATION_PHRASES = [
@@ -45,6 +48,172 @@ CONFIRMATION_PHRASES = [
 
 def load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_custom_rules(path: Path = PROFILE_PATH) -> List[Dict[str, str]]:
+    """Load user-defined keyword->answer rules from config/profile.json."""
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        rules = data.get("custom_rules", [])
+        if not isinstance(rules, list):
+            return []
+        return [
+            {"keyword": str(r.get("keyword", "")).strip().lower(), "answer": str(r.get("answer", "")).strip()}
+            for r in rules
+            if str(r.get("keyword", "")).strip() and str(r.get("answer", "")).strip()
+        ]
+    except Exception:
+        return []
+
+
+def match_custom_rule(question: str, custom_rules: List[Dict[str, str]]) -> str:
+    """Return the answer for the first custom rule whose keyword matches question."""
+    q_low = (question or "").lower()
+    for rule in custom_rules:
+        if rule["keyword"] in q_low:
+            return rule["answer"]
+    return ""
+
+
+def load_saved_unanswered_answers(path: Path = UNANSWERED_QUESTIONS_PATH) -> Dict[str, str]:
+    """Load user-filled answers from data/unanswered_questions.json keyed by normalized question."""
+    if not path.exists():
+        return {}
+    try:
+        entries = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(entries, list):
+            return {}
+        return {
+            (e.get("question") or "").strip().lower(): str(e.get("answer")).strip()
+            for e in entries
+            if (e.get("question") or "").strip() and str(e.get("answer") or "").strip()
+        }
+    except Exception:
+        return {}
+
+
+def log_unanswered_question(
+    field_type: str,
+    question: str,
+    options: List[str],
+    company: str = "",
+    url: str = "",
+    path: Path = UNANSWERED_QUESTIONS_PATH,
+) -> None:
+    """Append a deduplicated unanswered question with blank answer to data/unanswered_questions.json."""
+    q_clean = re.sub(r"\s+", " ", question).strip()
+    if not q_clean:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entries: List[Dict[str, Any]] = []
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                entries = loaded
+        except Exception:
+            entries = []
+
+    norm_key = (field_type.lower(), q_clean.lower())
+    for existing in entries:
+        if (
+            str(existing.get("field_type", "")).lower(),
+            str(existing.get("question", "")).strip().lower(),
+        ) == norm_key:
+            return
+
+    entries.append(
+        {
+            "field_type": field_type,
+            "question": q_clean,
+            "options": options,
+            "company": company,
+            "url": url,
+            "answer": "",
+        }
+    )
+    path.write_text(json.dumps(entries, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+# Known multi-word or symbolic skills to match safely against config/master_profile.md
+_PROFILE_SKILL_CATALOG = [
+    "c++", "c#", "typescript", "javascript", "python", "java", "sql", "oracle",
+    "sqlite", "postgresql", "plpgsql", "html", "html5", "css", "css3", "php",
+    "shell", "bash", "gdscript", "docker", "linux", "unix", "git", "react",
+    "node.js", "three.js", "vite", "supabase", "valgrind", "gdb",
+    "réseaux", "réseau", "network", "networking", "cryptographie", "sécurité",
+    "cybersécurité", "cybersecurity", "http", "tcp", "frontend", "backend",
+    "base de données", "application web", "devops", "eclipse", "virtualbox",
+]
+
+
+def load_master_profile_skills(path: Path = MASTER_PROFILE_PATH) -> Set[str]:
+    """Extract verified skills and domains present in config/master_profile.md."""
+    if not path.exists():
+        return set()
+    text = path.read_text(encoding="utf-8", errors="ignore").lower()
+    verified: Set[str] = set()
+    for skill in _PROFILE_SKILL_CATALOG:
+        if len(skill) <= 3 and skill.isalnum():
+            if re.search(rf"(?<![a-z0-9]){re.escape(skill)}(?![a-z0-9])", text):
+                verified.add(skill)
+        elif skill in text:
+            verified.add(skill)
+    # Full-stack web evidence from verified repos (chaski-booking, Transcendence, portfolio-iut, webserv)
+    if any(k in text for k in ("typescript", "react", "plpgsql", "supabase", "html", "php")):
+        verified.update({"frontend", "backend", "base de données", "application web", "fullstack"})
+    return verified
+
+
+def classify_yes_no_question(question: str, verified_skills: Set[str]) -> Optional[Tuple[str, ...]]:
+    """Return ('Non', 'No') or ('Oui', 'Yes') for a form question grounded in master_profile.md."""
+    q = question.lower()
+
+    # 1. Explicit "No" cases (visa/disability, higher degree than BUT 2, or unverified domains like mobile)
+    if any(k in q for k in ("visa", "sponsor", "parrainage", "handicap", "disability")):
+        return ("Non", "No")
+    if any(k in q for k in ("bac+5", "bac +5", "master 2", "m2", "fin d'études", "fin d'étude", "pfe")):
+        if not any(k in q for k in ("bac+2", "bac +2", "bac+3", "bac +3", "but 2", "but 3")):
+            return ("Non", "No")
+    if any(k in q for k in (
+        "développement mobile", "dev mobile", "mobile dev", "application mobile",
+        "applications mobiles", "android", "ios", "flutter", "react native", "kotlin", "swift",
+    )):
+        return ("Non", "No")
+
+    # 2. Recruitment events & AI coding tools
+    if any(k in q for k in ("événement", "événements", "invitation", "formation de code")):
+        return ("Oui", "Yes")
+    if any(k in q for k in ("outils d'ia", "outil d'ia", "claude", "cursor", "copilot", "chatgpt", "ia pour développer", "ai tools")):
+        return ("Oui", "Yes")
+
+    # 3. Verified full-stack / web / cursus / work authorization questions
+    if any(k in q for k in (
+        "application web", "frontend", "backend", "base de donnée", "base de données",
+        "fullstack", "full-stack", "full stack",
+    )):
+        if "application web" in verified_skills or "frontend" in verified_skills:
+            return ("Oui", "Yes")
+
+    if any(k in q for k in (
+        "autoris", "légale", "work", "france", "stage", "convention", "disponib",
+        "majeur", "bac+2", "bac +2", "bac+3", "bac +3", "but 2", "but2",
+        "hybride", "présentiel", "remote", "télétravail", "english", "french",
+        "français", "anglais", "degree", "diplôme", "projet académique", "projets académiques",
+    )):
+        return ("Oui", "Yes")
+
+    # 4. Dynamic match against verified skills from config/master_profile.md
+    for skill in verified_skills:
+        if len(skill) <= 3 and skill.isalnum():
+            if re.search(rf"(?<![a-z0-9]){re.escape(skill)}(?![a-z0-9])", q):
+                return ("Oui", "Yes")
+        elif skill in q:
+            return ("Oui", "Yes")
+
+    return None
 
 
 def update_tracker_status(url: str, company: str, new_status: str) -> None:
@@ -144,7 +313,7 @@ async def click_apply_and_follow_redirect(page: Page) -> Tuple[Page, bool]:
     try:
         await page.wait_for_selector(
             "button.jobs-apply-button, button:has-text('Candidature simplifiée'), button:has-text('Easy Apply'), button:has-text('Postuler'), a:has-text('Postuler')",
-            timeout=7000,
+            timeout=12000,
         )
     except Exception:
         pass
@@ -152,12 +321,12 @@ async def click_apply_and_follow_redirect(page: Page) -> Tuple[Page, bool]:
     for sel in selectors:
         try:
             loc = page.locator(sel).first
-            if not await loc.is_visible(timeout=800):
+            if not await loc.is_visible(timeout=1200):
                 continue
 
             initial_url = page.url
             try:
-                async with page.expect_popup(timeout=3000) as popup_info:
+                async with page.expect_popup(timeout=6000) as popup_info:
                     await loc.click()
                 new_page = await popup_info.value
                 await new_page.wait_for_load_state("domcontentloaded", timeout=15000)
@@ -219,6 +388,102 @@ async def get_label_text(page: Page, el) -> str:
     except Exception:
         pass
     return " ".join(parts).lower()
+
+
+async def get_human_question_text(page: Page, el, exclude_texts: Optional[List[str]] = None) -> str:
+    """Extract clean human-readable question text without raw HTML name/id attributes."""
+    candidates: List[str] = []
+
+    # 1. <fieldset><legend> (either el itself or ancestor fieldset)
+    try:
+        legend = el.locator("legend, xpath=ancestor::fieldset[1]/legend").first
+        if await legend.count() > 0:
+            txt = re.sub(r"\s+", " ", await legend.inner_text()).strip()
+            if txt:
+                candidates.append(txt)
+    except Exception:
+        pass
+
+    # 2. <label for="...">
+    try:
+        el_id = await el.get_attribute("id")
+        if el_id:
+            lbl = page.locator(f"label[for='{el_id}']").first
+            if await lbl.count() > 0:
+                txt = re.sub(r"\s+", " ", await lbl.inner_text()).strip()
+                if txt:
+                    candidates.append(txt)
+    except Exception:
+        pass
+
+    # 3. Wrapping <label>
+    try:
+        wrap_lbl = el.locator("xpath=ancestor::label[1]").first
+        if await wrap_lbl.count() > 0:
+            txt = re.sub(r"\s+", " ", await wrap_lbl.inner_text()).strip()
+            if txt:
+                candidates.append(txt)
+    except Exception:
+        pass
+
+    # 4. aria-labelledby
+    try:
+        labelled_by = await el.get_attribute("aria-labelledby")
+        if labelled_by:
+            lbl_parts = []
+            for ref_id in labelled_by.split():
+                ref = page.locator(f"#{ref_id}").first
+                if await ref.count() > 0:
+                    lbl_parts.append((await ref.inner_text()).strip())
+            joined = re.sub(r"\s+", " ", " ".join(lbl_parts)).strip()
+            if joined:
+                candidates.append(joined)
+    except Exception:
+        pass
+
+    # 5. aria-label / placeholder
+    for attr in ("aria-label", "placeholder"):
+        try:
+            val = await el.get_attribute(attr)
+            if val and val.strip():
+                candidates.append(val.strip())
+        except Exception:
+            pass
+
+    # 6. Closest preceding label / heading / paragraph / span
+    try:
+        prev = el.locator(
+            "xpath=preceding-sibling::*[self::label or self::h1 or self::h2 or self::h3 or self::h4 or self::p or self::span or self::div][1]"
+        ).first
+        if await prev.count() > 0:
+            txt = re.sub(r"\s+", " ", await prev.inner_text()).strip()
+            if txt and len(txt) < 300:
+                candidates.append(txt)
+    except Exception:
+        pass
+
+    # 7. Parent form container fallback
+    try:
+        parent_el = el.locator(
+            "xpath=ancestor-or-self::div[contains(@class,'fb-dash-form-element') or contains(@class,'jobs-easy-apply-form-element') or contains(@class,'field') or contains(@class,'question')][1]"
+        ).first
+        if await parent_el.count() > 0:
+            txt = re.sub(r"\s+", " ", await parent_el.inner_text()).strip()
+            if exclude_texts:
+                for ex in exclude_texts:
+                    if ex:
+                        txt = txt.replace(ex, " ")
+                txt = re.sub(r"\s+", " ", txt).strip()
+            if txt:
+                candidates.append(txt)
+    except Exception:
+        pass
+
+    # Return the first meaningful candidate (preferring specific legend/label over broad container)
+    for c in candidates:
+        if c:
+            return c[:250]
+    return ""
 
 
 async def get_form_root(page: Page):
@@ -334,7 +599,23 @@ async def try_fill_date_or_calendar(page: Page, el, is_end: bool) -> Optional[st
     return None
 
 
-async def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[str]:
+async def answer_common_questions(
+    page: Page,
+    answers: Dict[str, str],
+    verified_skills: Optional[Set[str]] = None,
+    seen_unanswered: Optional[Set[str]] = None,
+    step_unanswered: Optional[List[str]] = None,
+    company: str = "",
+    url: str = "",
+) -> List[str]:
+    if verified_skills is None:
+        verified_skills = load_master_profile_skills()
+    if seen_unanswered is None:
+        seen_unanswered = set()
+    if step_unanswered is None:
+        step_unanswered = []
+    saved_answers = load_saved_unanswered_answers()
+    custom_rules = load_custom_rules()
     answered: List[str] = []
     root = await get_form_root(page)
 
@@ -345,7 +626,7 @@ async def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[s
             el = inputs.nth(i)
             try:
                 itype = (await el.get_attribute("type") or "text").lower()
-                if itype in {"hidden", "file", "submit", "button", "checkbox", "radio", "search"}:
+                if itype in {"hidden", "file", "submit", "button", "checkbox", "radio", "search", "password"}:
                     continue
                 if (await el.input_value() or "").strip():
                     continue
@@ -389,11 +670,25 @@ async def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[s
                 elif is_num:
                     val = "1"
 
+                if not val:
+                    human_q = await get_human_question_text(page, el)
+                    saved_val = saved_answers.get(human_q.lower(), "") if human_q else ""
+                    if not saved_val:
+                        saved_val = match_custom_rule(human_q or q, custom_rules)
+                    if saved_val:
+                        val = saved_val
+
                 if val:
                     await el.fill(val)
                     answered.append(f"input -> {val[:30]}")
-                elif q.strip():
-                    print(f"  [?] Unanswered input: {q.strip()[:90]}")
+                else:
+                    human_q = await get_human_question_text(page, el)
+                    if human_q:
+                        step_unanswered.append(human_q)
+                        if human_q not in seen_unanswered:
+                            seen_unanswered.add(human_q)
+                            print(f"  [?] Unanswered input: {human_q}")
+                            log_unanswered_question("input", human_q, [], company=company, url=url)
             except Exception:
                 continue
     except Exception:
@@ -410,42 +705,84 @@ async def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[s
                     continue
                 q = await get_label_text(page, sel)
                 opts = [await o.inner_text() for o in await sel.locator("option").all()]
-                opts = [o.strip() for o in opts]
-                prefer_no = any(k in q for k in ("visa", "sponsor", "handicap"))
-                targets = (
-                    ("Non", "No")
-                    if prefer_no
-                    else ("Oui", "Yes", "France (+33)", "C1", "Courant", "Fluent", "Bac+2", "Bac +2")
-                )
-                for target in targets:
-                    match = next((o for o in opts if target.lower() in o.lower()), None)
-                    if match:
-                        await sel.select_option(label=match)
-                        answered.append(f"select -> {match}")
-                        break
+                opts = [o.strip() for o in opts if o.strip()]
+                clean_opts = [o for o in opts if o.lower() not in {"select an option", "sélectionner une option", "choisir...", "--"}]
+                human_q = await get_human_question_text(page, sel)
+                saved_val = saved_answers.get(human_q.lower(), "") if human_q else ""
+                if not saved_val:
+                    saved_val = match_custom_rule(human_q or q, custom_rules)
+
+                matched_opt = None
+                if saved_val:
+                    matched_opt = next((o for o in clean_opts if saved_val.lower() in o.lower()), None)
+                if not matched_opt:
+                    yn = classify_yes_no_question(q, verified_skills)
+                    if yn == ("Non", "No"):
+                        targets = ("Non", "No")
+                    else:
+                        targets = (
+                            "Oui", "Yes", "France (+33)", "C1", "Courant", "Fluent",
+                            "B2", "Intermédiaire", "Bac+2", "Bac +2", "BUT 2",
+                            "1 an", "Moins d'un an", "3 mois",
+                        )
+                    for target in targets:
+                        matched_opt = next((o for o in clean_opts if target.lower() in o.lower()), None)
+                        if matched_opt:
+                            break
+
+                if matched_opt:
+                    await sel.select_option(label=matched_opt)
+                    answered.append(f"select -> {matched_opt}")
+                elif human_q:
+                    step_unanswered.append(human_q)
+                    if human_q not in seen_unanswered:
+                        seen_unanswered.add(human_q)
+                        print(f"  [?] Unanswered select: {human_q} | Options: {clean_opts}")
+                        log_unanswered_question("select", human_q, clean_opts, company=company, url=url)
             except Exception:
                 continue
     except Exception:
         pass
 
-    # 3. Radio groups
+    # 3. Radio groups (fieldset & ARIA radiogroup)
     try:
-        fieldsets = root.locator("fieldset:visible")
+        fieldsets = root.locator("fieldset:visible, [role='radiogroup']:visible")
         for i in range(await fieldsets.count()):
             fs = fieldsets.nth(i)
             try:
-                if await fs.locator("input[type='radio']:checked").count() > 0:
+                if await fs.locator("input[type='radio']:checked, [role='radio'][aria-checked='true']").count() > 0:
                     continue
-                legend = await get_label_text(page, fs) + " " + (await fs.inner_text()).lower()
-                if any(k in legend for k in ("visa", "sponsor", "handicap", "disability")):
-                    choices = ("Non", "No")
-                elif any(k in legend for k in ("autoris", "légale", "work", "france", "stage", "convention", "disponib", "majeur", "bac+", "hybride", "présentiel", "remote", "english", "french", "français", "anglais", "degree", "diplôme")):
-                    choices = ("Oui", "Yes")
-                else:
-                    print(f"  [?] Unanswered radio: {legend.strip()[:90]}")
+                all_labels = await fs.locator("label:visible, [role='radio']:visible").all()
+                option_texts = [re.sub(r"\s+", " ", await lbl.inner_text()).strip() for lbl in all_labels]
+                option_texts = [o for o in option_texts if o]
+                human_q = await get_human_question_text(page, fs, exclude_texts=option_texts)
+                legend = (human_q + " " + (await fs.inner_text())).lower()
+
+                saved_val = saved_answers.get(human_q.lower(), "") if human_q else ""
+                if not saved_val:
+                    saved_val = match_custom_rule(human_q or legend, custom_rules)
+                choices: Optional[Tuple[str, ...]] = (saved_val,) if saved_val else classify_yes_no_question(legend, verified_skills)
+                if not choices:
+                    if human_q:
+                        step_unanswered.append(human_q)
+                        if human_q not in seen_unanswered:
+                            seen_unanswered.add(human_q)
+                            print(f"  [?] Unanswered radio: {human_q} | Options: {option_texts}")
+                            log_unanswered_question("radio", human_q, option_texts, company=company, url=url)
                     continue
 
+                clicked_radio = False
                 for lbl_txt in choices:
+                    target_l = lbl_txt.lower()
+                    for lbl in all_labels:
+                        txt = (await lbl.inner_text()).strip().lower()
+                        if txt == target_l or txt.startswith(f"{target_l} ") or txt.startswith(f"{target_l},"):
+                            await lbl.click()
+                            answered.append(f"radio -> {lbl_txt}")
+                            clicked_radio = True
+                            break
+                    if clicked_radio:
+                        break
                     lbl = fs.locator(f"label:has-text('{lbl_txt}')").first
                     if await lbl.count() > 0 and await lbl.is_visible(timeout=300):
                         await lbl.click()
@@ -456,18 +793,65 @@ async def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[s
     except Exception:
         pass
 
-    # 4. Required privacy/terms checkboxes
+    # 4. Checkboxes & Consent Toggles (<input type="checkbox"> and role="checkbox")
     try:
-        cbs = root.locator("input[type='checkbox']:visible")
+        cbs = root.locator("input[type='checkbox']:visible, [role='checkbox']:visible")
         for i in range(await cbs.count()):
             cb = cbs.nth(i)
             try:
-                if await cb.is_checked():
+                cb_id = (await cb.get_attribute("id") or "").lower()
+                if "follow-company" in cb_id:
                     continue
-                q = await get_label_text(page, cb)
-                if any(k in q for k in ("politique", "confidentialité", "privacy", "conditions", "terms", "certifie", "exact")):
-                    await cb.check(force=True)
-                    answered.append("checkbox -> accepted terms")
+
+                role_attr = (await cb.get_attribute("role") or "").lower()
+                is_checked = (
+                    (await cb.get_attribute("aria-checked") == "true")
+                    if role_attr == "checkbox"
+                    else await cb.is_checked()
+                )
+                if is_checked:
+                    continue
+
+                human_q = await get_human_question_text(page, cb)
+                q_low = (human_q + " " + await get_label_text(page, cb)).lower()
+                is_required = (
+                    await cb.get_attribute("required") is not None
+                    or await cb.get_attribute("aria-required") == "true"
+                    or "*" in human_q
+                )
+                is_marketing = any(
+                    k in q_low
+                    for k in ("newsletter", "marketing", "promotion", "offres commerciales", "partenaires", "actualités", "publicité")
+                )
+                is_legal = any(
+                    k in q_low
+                    for k in (
+                        "accepte", "j'accepte", "conditions", "politique", "confidentialité",
+                        "rgpd", "gdpr", "privacy", "terms", "certifie", "exactitude",
+                        "exact", "lu et approuvé", "consent", "autorise le traitement",
+                    )
+                )
+                saved_val = saved_answers.get(human_q.lower(), "").lower() if human_q else ""
+                if not saved_val:
+                    saved_val = match_custom_rule(human_q or q_low, custom_rules).lower()
+                yn_cb = classify_yes_no_question(q_low, verified_skills)
+
+                if saved_val in {"checked", "oui", "yes", "true", "1"} or is_legal or (is_required and not is_marketing) or (yn_cb == ("Oui", "Yes") and not is_marketing):
+                    if role_attr == "checkbox":
+                        await cb.click()
+                    else:
+                        await cb.check(force=True)
+                    answered.append(f"checkbox -> checked ({human_q[:40]})")
+                elif is_marketing and not is_required:
+                    continue
+                elif saved_val in {"unchecked", "non", "no", "false", "0"}:
+                    continue
+                elif human_q:
+                    step_unanswered.append(human_q)
+                    if human_q not in seen_unanswered:
+                        seen_unanswered.add(human_q)
+                        print(f"  [?] Unanswered checkbox: {human_q} | Options: ['checked', 'unchecked']")
+                        log_unanswered_question("checkbox", human_q, ["checked", "unchecked"], company=company, url=url)
             except Exception:
                 continue
     except Exception:
@@ -639,39 +1023,73 @@ async def process_offer_concurrently(
 
     print(f"[*] [{company}] Opening {url}")
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass
     except Exception as e:
-        print(f"[!] [{company}] Load error: {e}")
+        print(f"[!] Bailout [{company}]: Timeout/load error opening offer URL ({e})")
         return page, "manual_portal"
 
-    await page.wait_for_timeout(1000)
+    await page.wait_for_timeout(1200)
     await accept_cookies_if_present(page)
     active_page, clicked = await click_apply_and_follow_redirect(page)
     if active_page.is_closed():
+        print(f"[!] Bailout [{company}]: Tab closed unexpectedly after clicking Apply")
         return active_page, "closed"
 
     ats = detect_ats_provider(active_page.url)
     print(f"[*] [{company}] Apply clicked: {clicked} | Target: {ats}")
 
+    if not clicked:
+        print(f"[!] Bailout [{company}]: Apply button not found on page ({active_page.url})")
+        if auto:
+            update_tracker_status(url, company, "manual_portal")
+        return active_page, "manual_portal"
+
     if any(k in active_page.url.lower() for k in ("authwall", "/login", "connexion", "signin")):
-        print(f"[!] [{company}] Login wall -> manual_portal")
+        print(f"[!] Bailout [{company}]: Login wall detected ({active_page.url})")
         update_tracker_status(url, company, "manual_portal")
         return active_page, "manual_portal"
 
+    verified_skills = load_master_profile_skills()
+    seen_unanswered: Set[str] = set()
+    last_step_unanswered: List[str] = []
+    bailout_reason = ""
     final_status = "manual_portal"
-    for step in range(1, 7):
+    for step in range(1, 9):
         if active_page.is_closed():
+            bailout_reason = f"Tab closed mid-fill at step {step}"
             break
         try:
+            try:
+                await active_page.wait_for_load_state("domcontentloaded", timeout=8000)
+            except Exception:
+                pass
+            await active_page.wait_for_timeout(600)
+
+            step_unanswered: List[str] = []
             filled = await fill_matching_fields(active_page, profile["form_answers"])
-            filled.extend(await answer_common_questions(active_page, profile["form_answers"]))
+            filled.extend(
+                await answer_common_questions(
+                    active_page,
+                    profile["form_answers"],
+                    verified_skills=verified_skills,
+                    seen_unanswered=seen_unanswered,
+                    step_unanswered=step_unanswered,
+                    company=company,
+                    url=url,
+                )
+            )
+            last_step_unanswered = step_unanswered
             attached = await inject_files(active_page, cv_pdf, lm_pdf)
             if attached:
                 await active_page.wait_for_timeout(700)
 
             is_external = ats not in {"LinkedIn", "HelloWork", "Welcome to the Jungle"}
             if step == 1 and skip_external and is_external and len(filled) == 0 and len(attached) == 0:
-                print(f"[*] [{company}] External portal ({ats}) -> skipping (manual_portal)")
+                print(f"[!] Bailout [{company}]: External ATS redirect ({ats}: {active_page.url})")
                 update_tracker_status(url, company, "manual_portal")
                 return active_page, "manual_portal"
 
@@ -688,12 +1106,26 @@ async def process_offer_concurrently(
                 return active_page, "ready_for_review"
 
             if not await try_click_next_step(active_page):
+                if step_unanswered:
+                    bailout_reason = f"Blocked by unanswered required fields: {step_unanswered}"
+                else:
+                    bailout_reason = f"No Next/Submit button found at step {step} ({ats})"
                 break
         except Exception as e:
+            bailout_reason = f"Step {step} error ({e})"
             print(f"[!] [{company}] Step {step} error: {e}")
             break
+    else:
+        if last_step_unanswered:
+            bailout_reason = f"Blocked by unanswered required fields: {last_step_unanswered}"
+        else:
+            bailout_reason = f"Form did not reach Submit after 8 steps ({ats})"
+
+    if not bailout_reason:
+        bailout_reason = f"Form incomplete ({ats})"
 
     if auto:
+        print(f"[!] Bailout [{company}]: {bailout_reason}")
         update_tracker_status(url, company, final_status)
         print(f"[*] [{company}] Finished -> '{final_status}'")
     return active_page, final_status
@@ -705,7 +1137,8 @@ async def async_main() -> int:
     parser.add_argument("--metas", nargs="+", help="Multiple metadata.json paths to run simultaneously")
     parser.add_argument("--tabs", type=int, default=5, help="Simultaneous tabs per batch (default: 5)")
     parser.add_argument("--url", default="", help="Override job URL")
-    parser.add_argument("--auto", action="store_true", help="Auto-submit simple forms without pausing")
+    parser.add_argument("--auto", action="store_true", help="Auto-submit simple forms without pausing (runs headless by default)")
+    parser.add_argument("--headed", action="store_true", help="Show the browser window even in --auto mode")
     parser.add_argument("--skip-external", action="store_true", help="Skip external ATS redirects")
     parser.add_argument("--login", action="store_true", help="Open Chrome to log into LinkedIn & HelloWork")
     args = parser.parse_args()
@@ -745,12 +1178,22 @@ async def async_main() -> int:
 
     profile = load_json(PROFILE_PATH)
 
-    async with async_playwright() as p:
-        context = await p.chromium.launch_persistent_context(
-            user_data_dir=str(CHROME_PROFILE_DIR),
-            headless=False,
-            viewport={"width": 1280, "height": 860},
+    run_headless = bool(args.auto and not args.headed)
+    launch_kwargs: Dict[str, Any] = {
+        "user_data_dir": str(CHROME_PROFILE_DIR),
+        "headless": run_headless,
+        "viewport": {"width": 1280, "height": 860},
+        "args": ["--disable-blink-features=AutomationControlled"],
+    }
+    if run_headless:
+        launch_kwargs["channel"] = "chromium"
+        launch_kwargs["user_agent"] = (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         )
+
+    async with async_playwright() as p:
+        context = await p.chromium.launch_persistent_context(**launch_kwargs)
 
         max_workers = max(1, args.tabs)
         if args.auto and len(meta_paths) > 1:

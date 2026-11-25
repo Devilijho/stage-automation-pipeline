@@ -20,7 +20,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Set, Tuple
 from urllib.parse import quote_plus
 
 import requests
@@ -67,15 +67,71 @@ EXCLUDE_TITLE_TERMS = [
 ]
 
 
-def load_existing_urls() -> Set[str]:
+def normalize_company_role_key(company: str, role: str) -> Tuple[str, str]:
+    """Normalize (company, role) for cross-site deduplication (LinkedIn vs HelloWork vs WTTJ)."""
+    c = re.sub(r"[^\w\s]", " ", (company or "").lower())
+    c = re.sub(r"\s+", " ", c).strip()
+    r = (role or "").lower()
+    r = re.sub(r"\b(h\s*/\s*f|f\s*/\s*h|h\s*/\s*f\s*/\s*x|x\s*/\s*f\s*/\s*m|m\s*/\s*f)\b", " ", r)
+    r = re.sub(r"[^\w\s]", " ", r)
+    r = re.sub(r"\s+", " ", r).strip()
+    return c, r
+
+
+def load_existing_offers() -> Tuple[Set[str], Set[Tuple[str, str]]]:
     if not APPS_CSV_PATH.exists():
-        return set()
+        return set(), set()
+    urls: Set[str] = set()
+    keys: Set[Tuple[str, str]] = set()
     with APPS_CSV_PATH.open("r", newline="", encoding="utf-8") as f:
-        return {
-            (r.get("URL") or "").strip().rstrip("/").lower()
-            for r in csv.DictReader(f)
-            if (r.get("URL") or "").strip()
-        }
+        for r in csv.DictReader(f):
+            u = (r.get("URL") or "").strip().rstrip("/").lower()
+            if u:
+                urls.add(u)
+            comp = (r.get("Company") or "").strip()
+            role = (r.get("Role") or "").strip()
+            if comp and role:
+                keys.add(normalize_company_role_key(comp, role))
+    return urls, keys
+
+
+FINAL_YEAR_TERMS = (
+    "fin d'études",
+    "fin d'etudes",
+    "fin de cursus",
+    "pfe",
+    "bac+5",
+    "bac +5",
+)
+
+BUT_FRIENDLY_TERMS = (
+    "but 2",
+    "but 3",
+    "but2",
+    "but3",
+    "bac+2",
+    "bac +2",
+    "bac+3",
+    "bac +3",
+    "iut",
+    "dut",
+    "2ème année",
+    "3ème année",
+)
+
+
+def is_excluded_final_year_offer(title: str, description: str = "") -> bool:
+    """Return True if offer targets 6-month PFE / Bac+5 without accepting Bac+2/3."""
+    t_low = title.lower()
+    d_low = description.lower()
+    combined = f"{t_low} {d_low}"
+    if any(ok in combined for ok in BUT_FRIENDLY_TERMS):
+        return False
+    if any(term in t_low for term in FINAL_YEAR_TERMS):
+        return True
+    if any(term in d_low for term in (*FINAL_YEAR_TERMS, "master 2", "élève-ingénieur")):
+        return True
+    return False
 
 
 def score_offer(title: str, location: str, description: str) -> int:
@@ -86,10 +142,8 @@ def score_offer(title: str, location: str, description: str) -> int:
     if any(bad in t_low for bad in EXCLUDE_TITLE_TERMS) and "stage" not in t_low:
         return -100
 
-    # Filter out Bac+5 / PFE / Fin d'études unless Bac+2/3 or BUT is explicitly accepted
-    is_but_friendly = any(k in d_low or k in t_low for k in ("but 2", "but 3", "but2", "but3", "bac+2", "bac +2", "bac+3", "bac +3", "iut", "dut", "2ème année", "3ème année"))
-    is_pfe_or_m2 = any(k in t_low or k in d_low for k in ("pfe", "fin d'études", "fin d'etudes", "bac+5", "bac +5", "master 2", "élève-ingénieur"))
-    if is_pfe_or_m2 and not is_but_friendly:
+    # Filter out Bac+5 / PFE / Fin d'études / Fin de cursus unless Bac+2/3 or BUT is explicitly accepted
+    if is_excluded_final_year_offer(title, description):
         return -50
 
     score = 0
@@ -340,7 +394,7 @@ def main() -> int:
         queue_metas = queue_metas[: args.limit]
         print(f"[*] Retrying {len(queue_metas)} existing '{args.retry}' offer(s)...")
     else:
-        existing_urls = load_existing_urls()
+        existing_urls, existing_keys = load_existing_offers()
         raw_offers: List[Dict[str, str]] = []
         seen_urls: Set[str] = set()
 
@@ -358,13 +412,21 @@ def main() -> int:
                         seen_urls.add(norm)
                         raw_offers.append(o)
 
-        print(f"\n[*] Found {len(raw_offers)} new unseen offers. Fetching details & scoring...")
+        print(f"\n[*] Found {len(raw_offers)} new unseen offers. Pre-filtering & fetching details...")
         detailed_offers: List[Dict[str, Any]] = []
         for o in raw_offers[: args.limit * 2]:
+            if is_excluded_final_year_offer(o.get("preview", "")):
+                print(f"  [-] Pre-filtered PFE/Bac+5 offer: {o.get('preview', o['url'])[:80]}")
+                continue
             try:
                 det = fetch_offer_details(o)
+                dedup_key = normalize_company_role_key(det["company"], det["role"])
+                if dedup_key in existing_keys:
+                    print(f"  [-] Skipping cross-site duplicate: {det['role']} @ {det['company']}")
+                    continue
                 sc = score_offer(det["role"], det["location"], det["text"])
                 if sc >= 0:
+                    existing_keys.add(dedup_key)
                     det["score"] = sc
                     detailed_offers.append(det)
                 time.sleep(0.3)

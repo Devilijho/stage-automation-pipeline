@@ -32,6 +32,7 @@ OUTPUT_DIR = WORKSPACE / "output"
 SCRIPTS_DIR = WORKSPACE / "scripts"
 APPS_CSV_PATH = DATA_DIR / "applications.csv"
 REPORT_HTML_PATH = DATA_DIR / "rapport_candidatures.html"
+UNANSWERED_QUESTIONS_PATH = DATA_DIR / "unanswered_questions.json"
 PYTHON_BIN = sys.executable
 
 LOG_LOCK = threading.Lock()
@@ -213,6 +214,37 @@ class StageHandler(BaseHTTPRequestHandler):
             profile = json.loads((CONFIG_DIR / "profile.json").read_text(encoding="utf-8"))
             master_md = (CONFIG_DIR / "master_profile.md").read_text(encoding="utf-8") if (CONFIG_DIR / "master_profile.md").exists() else ""
             self.send_json({"profile": profile, "master_md": master_md})
+        elif path == "/api/questions":
+            profile = json.loads((CONFIG_DIR / "profile.json").read_text(encoding="utf-8"))
+            unanswered: List[Dict[str, Any]] = []
+            if UNANSWERED_QUESTIONS_PATH.exists():
+                try:
+                    loaded = json.loads(UNANSWERED_QUESTIONS_PATH.read_text(encoding="utf-8"))
+                    if isinstance(loaded, list):
+                        unanswered = loaded
+                except Exception:
+                    unanswered = []
+            if str(SCRIPTS_DIR) not in sys.path:
+                sys.path.insert(0, str(SCRIPTS_DIR))
+            import apply_browser
+            verified_skills = sorted(apply_browser.load_master_profile_skills())
+            builtin_rules = [
+                {"category": "Non / No", "rule": "Visa, sponsorship, parrainage, handicap / disability"},
+                {"category": "Non / No", "rule": "Bac+5, Master 2, PFE / fin d'études (unless Bac+2/3 accepted)"},
+                {"category": "Non / No", "rule": "Mobile dev (Android, iOS, Flutter, React Native, Kotlin, Swift)"},
+                {"category": "Oui / Yes", "rule": "Work authorization, France, stage, convention, disponibilité, Bac+2/3, BUT 2, remote/hybride, FR/EN"},
+                {"category": "Oui / Yes", "rule": "Full-stack web (frontend, backend, base de données), AI coding tools, recruitment events"},
+                {"category": "Oui / Yes", "rule": "Any verified skill from config/master_profile.md"},
+                {"category": "Checkboxes", "rule": "Auto-check legal/RGPD/terms/required; leave non-required marketing unchecked"},
+                {"category": "Inputs & Dates", "rule": "Experience years -> 1 | Duration -> 3 mois | Start -> 03/05/2026 | End -> 16/07/2026"},
+            ]
+            self.send_json({
+                "unanswered": unanswered,
+                "form_answers": profile.get("form_answers", {}),
+                "custom_rules": profile.get("custom_rules", []),
+                "verified_skills": verified_skills,
+                "builtin_rules": builtin_rules,
+            })
         elif path == "/api/logs":
             with LOG_LOCK:
                 running = CURRENT_PROC is not None and CURRENT_PROC.poll() is None
@@ -238,6 +270,45 @@ class StageHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/applications/status":
             ok = update_application_status(body.get("url", ""), body.get("status", ""))
             self.send_json({"ok": ok})
+        elif parsed.path == "/api/questions":
+            q_type = body.get("type", "")
+            if q_type == "unanswered":
+                items = body.get("items", [])
+                if isinstance(items, list):
+                    UNANSWERED_QUESTIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
+                    UNANSWERED_QUESTIONS_PATH.write_text(
+                        json.dumps(items, indent=2, ensure_ascii=False) + "\n",
+                        encoding="utf-8",
+                    )
+                    self.send_json({"ok": True})
+                else:
+                    self.send_json({"ok": False}, status=400)
+            elif q_type == "form_answers":
+                fa = body.get("form_answers", {})
+                if isinstance(fa, dict):
+                    prof_path = CONFIG_DIR / "profile.json"
+                    profile = json.loads(prof_path.read_text(encoding="utf-8"))
+                    profile["form_answers"] = fa
+                    prof_path.write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                    self.send_json({"ok": True})
+                else:
+                    self.send_json({"ok": False}, status=400)
+            elif q_type == "custom_rules":
+                rules = body.get("custom_rules", [])
+                if isinstance(rules, list):
+                    prof_path = CONFIG_DIR / "profile.json"
+                    profile = json.loads(prof_path.read_text(encoding="utf-8"))
+                    profile["custom_rules"] = [
+                        {"keyword": str(r.get("keyword", "")).strip(), "answer": str(r.get("answer", "")).strip()}
+                        for r in rules
+                        if str(r.get("keyword", "")).strip() and str(r.get("answer", "")).strip()
+                    ]
+                    prof_path.write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                    self.send_json({"ok": True, "custom_rules": profile["custom_rules"]})
+                else:
+                    self.send_json({"ok": False}, status=400)
+            else:
+                self.send_json({"ok": False}, status=400)
         elif parsed.path == "/api/stop":
             with LOG_LOCK:
                 if CURRENT_PROC is not None and CURRENT_PROC.poll() is None:
