@@ -355,6 +355,17 @@ def main() -> int:
             print(f"  -> CV : {meta['cv_pdf']}")
             print(f"  -> LM : {meta['lm_pdf']}")
 
+    if not queue_metas and not args.scrape_only and APPS_CSV_PATH.exists():
+        # Fall back to existing 'drafted' offers so launching manual queue always opens pending offers
+        with APPS_CSV_PATH.open("r", newline="", encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                if (r.get("Status") or "").strip().lower() == "drafted" and r.get("CV_PDF"):
+                    mp = WORKSPACE / Path(r["CV_PDF"]).parent / "metadata.json"
+                    if mp.exists() and mp not in queue_metas:
+                        queue_metas.append(mp)
+        if queue_metas:
+            print(f"[*] No brand-new offers found; queuing {len(queue_metas)} pending 'drafted' offer(s).")
+
     if args.scrape_only or not queue_metas:
         print(f"\n[+] Done! Tailored {len(queue_metas)} offers. Logged in {APPS_CSV_PATH}.")
         return 0
@@ -371,11 +382,14 @@ def main() -> int:
         res = subprocess.run(cmd, cwd=str(WORKSPACE))
         if res.returncode != 0:
             print("[!] apply_browser.py exited with non-zero status.")
-        if not args.auto:
-            cont = input("Press [Enter] for next offer, or type 'q' to stop queue: ").strip().lower()
-            if cont == "q":
-                print("[*] Queue paused. Remaining tailored offers are saved in output/ and data/applications.csv.")
-                break
+        if not args.auto and sys.stdin.isatty():
+            try:
+                cont = input("Press [Enter] for next offer, or type 'q' to stop queue: ").strip().lower()
+                if cont == "q":
+                    print("[*] Queue paused. Remaining tailored offers are saved in output/ and data/applications.csv.")
+                    break
+            except EOFError:
+                pass
 
     return 0
 

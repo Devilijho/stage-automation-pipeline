@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>StageBot — Santiago FUENTES LLANOS</title>
+<title>StageBot</title>
 <style>
   :root {
     --bg: #0d1117; --panel: #161b22; --border: #30363d;
@@ -28,14 +28,12 @@
   button.secondary { background: #21262d; color: var(--text); border: 1px solid var(--border); padding: 8px 14px; border-radius: 6px; font-weight: 500; cursor: pointer; font-size: 13px; }
   button.primary:hover { background: #2ea043; }
   button.secondary:hover { border-color: var(--accent); }
+  .lang-bar { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .lang-btn { background: var(--bg); color: var(--muted); border: none; padding: 6px 10px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .lang-btn.active { background: #1f2937; color: var(--accent); }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { border-bottom: 1px solid var(--border); padding: 10px 8px; text-align: left; }
   th { color: var(--muted); font-weight: 600; font-size: 12px; }
-  .badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
-  .badge.applied { background: rgba(63,185,80,.18); color: var(--green); }
-  .badge.drafted { background: rgba(88,166,255,.18); color: var(--accent); }
-  .badge.manual_portal { background: rgba(210,153,34,.18); color: var(--amber); }
-  .badge.skipped { background: rgba(139,148,158,.18); color: var(--muted); }
   pre.log { background: #010409; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 12px; height: 220px; overflow-y: auto; color: #c9d1d9; margin: 0; white-space: pre-wrap; }
   .pdf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; height: 72vh; }
   iframe.pdf { width: 100%; height: 100%; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
@@ -45,25 +43,30 @@
 <body>
 <aside>
   <div class="brand">StageBot</div>
-  <div class="sub" id="sidebar-sub">Chargement...</div>
-  <button class="nav-btn active" onclick="showTab('tracker', this)">Candidatures</button>
-  <button class="nav-btn" onclick="showTab('search', this)">Chercher &amp; Postuler</button>
-  <button class="nav-btn" onclick="showTab('preview', this)">Aperçu CV &amp; LM</button>
-  <button class="nav-btn" onclick="showTab('profile', this)">Profil &amp; GitHub</button>
+  <div class="sub" id="sidebar-sub">Loading...</div>
+  <button class="nav-btn active" id="nav-tracker" onclick="showTab('tracker', this)"></button>
+  <button class="nav-btn" id="nav-search" onclick="showTab('search', this)"></button>
+  <button class="nav-btn" id="nav-preview" onclick="showTab('preview', this)"></button>
+  <button class="nav-btn" id="nav-profile" onclick="showTab('profile', this)"></button>
   <div class="stats" id="stats-box">
-    <div>Total: <strong id="st-total">0</strong></div>
-    <div>Envoyés: <strong id="st-applied">0</strong></div>
-    <div>Brouillons: <strong id="st-drafted">0</strong></div>
-    <div>Portail: <strong id="st-manual">0</strong></div>
+    <div><span id="lbl-total">Total</span>: <strong id="st-total">0</strong></div>
+    <div><span id="lbl-applied">Sent</span>: <strong id="st-applied">0</strong></div>
+    <div><span id="lbl-drafted">Drafts</span>: <strong id="st-drafted">0</strong></div>
+    <div><span id="lbl-manual">Portal</span>: <strong id="st-manual">0</strong></div>
   </div>
 </aside>
 
 <main>
   <header>
-    <div id="page-title" style="font-weight:600;">Suivi des Candidatures</div>
+    <div id="page-title" style="font-weight:600;"></div>
     <div class="row">
-      <a href="/api/report" target="_blank"><button class="secondary">Justificatif Université (IUT)</button></a>
-      <button class="secondary" onclick="loadApps()">Actualiser</button>
+      <div class="lang-bar">
+        <button class="lang-btn" id="lang-es" onclick="setLang('es')">ES</button>
+        <button class="lang-btn" id="lang-fr" onclick="setLang('fr')">FR</button>
+        <button class="lang-btn" id="lang-en" onclick="setLang('en')">EN</button>
+      </div>
+      <a href="/api/report" target="_blank"><button class="secondary" id="btn-report"></button></a>
+      <button class="secondary" id="btn-refresh" onclick="loadApps()"></button>
     </div>
   </header>
 
@@ -71,9 +74,9 @@
     <!-- TRACKER TAB -->
     <section id="tab-tracker">
       <div class="card row">
-        <input id="filter-q" placeholder="Filtrer entreprise, poste, mot-clé..." oninput="renderTable()" style="flex:1; min-width:220px;">
+        <input id="filter-q" oninput="renderTable()" style="flex:1; min-width:220px;">
         <select id="filter-status" onchange="renderTable()">
-          <option value="">Tous les statuts</option>
+          <option value="" id="opt-all"></option>
           <option value="drafted">drafted</option>
           <option value="applied">applied</option>
           <option value="manual_portal">manual_portal</option>
@@ -83,7 +86,14 @@
       <div class="card" style="padding: 8px 16px;">
         <table>
           <thead>
-            <tr><th>Date</th><th>Entreprise</th><th>Poste</th><th>Statut</th><th>Documents</th><th>Actions</th></tr>
+            <tr>
+              <th id="th-date"></th>
+              <th id="th-company"></th>
+              <th id="th-role"></th>
+              <th id="th-status"></th>
+              <th id="th-docs"></th>
+              <th id="th-actions"></th>
+            </tr>
           </thead>
           <tbody id="apps-tbody"></tbody>
         </table>
@@ -93,34 +103,34 @@
     <!-- SEARCH TAB -->
     <section id="tab-search" class="hidden">
       <div class="card">
-        <h3 style="margin-top:0;">Lancer une recherche de stages (Paris / Saclay / Bures-sur-Yvette)</h3>
+        <h3 id="search-heading" style="margin-top:0;"></h3>
         <div class="row" style="margin-bottom:12px;">
-          <input id="q-input" value="stage informatique, stage développeur, stage cybersécurité, stage réseaux" style="flex:1;">
-          <input id="q-limit" type="number" value="10" min="1" max="50" style="width:80px;" title="Nombre max d'offres">
+          <input id="q-input" value="" style="flex:1;">
+          <input id="q-limit" type="number" value="10" min="1" max="50" style="width:80px;">
         </div>
         <div class="row" style="margin-bottom:14px;">
           <label><input type="checkbox" id="src-li" checked> LinkedIn</label>
           <label><input type="checkbox" id="src-hw" checked> HelloWork</label>
         </div>
         <div class="row">
-          <button class="secondary" onclick="runBatch('search')">1. Chercher &amp; Générer CV/LM</button>
-          <button class="primary" onclick="runBatch('apply')">2. Lancer File Manuelle (Chrome)</button>
-          <button class="secondary" onclick="runBatch('auto')">3. Mode Auto (--auto)</button>
+          <button class="secondary" id="btn-batch-search" onclick="runBatch('search')"></button>
+          <button class="primary" id="btn-batch-apply" onclick="runBatch('apply')"></button>
+          <button class="secondary" id="btn-batch-auto" onclick="runBatch('auto')"></button>
         </div>
       </div>
       <div class="card">
         <div class="row" style="justify-content:space-between; margin-bottom:8px;">
-          <strong>Logs en direct</strong>
-          <span id="run-state" style="font-size:12px; color:var(--muted);">Inactif</span>
+          <strong id="lbl-logs"></strong>
+          <span id="run-state" style="font-size:12px; color:var(--muted);"></span>
         </div>
-        <pre class="log" id="live-log">Prêt.</pre>
+        <pre class="log" id="live-log"></pre>
       </div>
     </section>
 
     <!-- PREVIEW TAB -->
     <section id="tab-preview" class="hidden">
       <div class="card row" style="justify-content:space-between;">
-        <div id="preview-label" style="font-weight:600;">Sélectionnez une candidature dans l'onglet Candidatures</div>
+        <div id="preview-label" style="font-weight:600;"></div>
       </div>
       <div class="pdf-grid">
         <iframe class="pdf" id="pdf-cv"></iframe>
@@ -131,8 +141,8 @@
     <!-- PROFILE TAB -->
     <section id="tab-profile" class="hidden">
       <div class="card row" style="justify-content:space-between;">
-        <div><strong>Profil Maître &amp; Dépôts GitHub Vérifiés</strong></div>
-        <button class="primary" onclick="runSync()">Synchroniser GitHub</button>
+        <div><strong id="lbl-master"></strong></div>
+        <button class="primary" id="btn-sync" onclick="runSync()"></button>
       </div>
       <div class="card">
         <pre class="log" id="master-md" style="height:65vh;"></pre>
@@ -142,15 +152,101 @@
 </main>
 
 <script>
+const I18N = {
+  fr: {
+    navTracker: "Candidatures", navSearch: "Chercher & Postuler", navPreview: "Aperçu CV & LM", navProfile: "Profil & GitHub",
+    total: "Total", applied: "Envoyés", drafted: "Brouillons", manual: "Portail",
+    report: "Justificatif Université (IUT)", refresh: "Actualiser",
+    filterPlaceholder: "Filtrer entreprise, poste, mot-clé...", allStatuses: "Tous les statuts",
+    thDate: "Date", thCompany: "Entreprise", thRole: "Poste", thStatus: "Statut", thDocs: "Documents", thActions: "Actions",
+    viewPdf: "Voir PDF", applyBtn: "Postuler",
+    searchHeading: "Lancer une recherche de stages",
+    btnSearch: "1. Chercher & Générer CV/LM", btnApply: "2. Lancer File Manuelle (Chrome)", btnAuto: "3. Mode Auto (--auto)",
+    logs: "Logs en direct", idle: "Inactif", running: "En cours...", done: "Terminé", ready: "Prêt.",
+    previewEmpty: "Sélectionnez une candidature dans l'onglet Candidatures",
+    masterTitle: "Profil Maître & Dépôts GitHub Vérifiés", syncBtn: "Synchroniser GitHub",
+    titles: {tracker:"Suivi des Candidatures", search:"Chercher & Postuler", preview:"Aperçu CV & Lettre de Motivation", profile:"Profil & GitHub"}
+  },
+  es: {
+    navTracker: "Candidaturas", navSearch: "Buscar y Postular", navPreview: "Vista CV y Carta", navProfile: "Perfil y GitHub",
+    total: "Total", applied: "Enviadas", drafted: "Borradores", manual: "Portal",
+    report: "Justificante Universidad (IUT)", refresh: "Actualizar",
+    filterPlaceholder: "Filtrar empresa, puesto, palabra clave...", allStatuses: "Todos los estados",
+    thDate: "Fecha", thCompany: "Empresa", thRole: "Puesto", thStatus: "Estado", thDocs: "Documentos", thActions: "Acciones",
+    viewPdf: "Ver PDF", applyBtn: "Postular",
+    searchHeading: "Buscar prácticas (stages)",
+    btnSearch: "1. Buscar y Generar CV/Carta", btnApply: "2. Cola Manual (Chrome)", btnAuto: "3. Modo Auto (--auto)",
+    logs: "Registros en vivo", idle: "Inactivo", running: "Ejecutando...", done: "Finalizado", ready: "Listo.",
+    previewEmpty: "Selecciona una candidatura en la pestaña Candidaturas",
+    masterTitle: "Perfil Maestro y Repositorios GitHub Verificados", syncBtn: "Sincronizar GitHub",
+    titles: {tracker:"Seguimiento de Candidaturas", search:"Buscar y Postular", preview:"Vista CV y Carta de Motivación", profile:"Perfil y GitHub"}
+  },
+  en: {
+    navTracker: "Applications", navSearch: "Search & Apply", navPreview: "CV & Letter Preview", navProfile: "Profile & GitHub",
+    total: "Total", applied: "Applied", drafted: "Drafts", manual: "Portal",
+    report: "University Proof Report", refresh: "Refresh",
+    filterPlaceholder: "Filter company, role, keyword...", allStatuses: "All statuses",
+    thDate: "Date", thCompany: "Company", thRole: "Role", thStatus: "Status", thDocs: "Documents", thActions: "Actions",
+    viewPdf: "View PDF", applyBtn: "Apply",
+    searchHeading: "Search for internships",
+    btnSearch: "1. Search & Generate CV/LM", btnApply: "2. Manual Review Queue (Chrome)", btnAuto: "3. Auto Mode (--auto)",
+    logs: "Live Logs", idle: "Idle", running: "Running...", done: "Done", ready: "Ready.",
+    previewEmpty: "Select an application from the Applications tab",
+    masterTitle: "Master Profile & Verified GitHub Repos", syncBtn: "Sync GitHub",
+    titles: {tracker:"Application Tracker", search:"Search & Apply", preview:"CV & Cover Letter Preview", profile:"Profile & GitHub"}
+  }
+};
+
+let currentLang = localStorage.getItem('stagebot_lang') || 'fr';
+let currentTab = 'tracker';
 let allRows = [];
 
+function setLang(lang) {
+  currentLang = I18N[lang] ? lang : 'fr';
+  localStorage.setItem('stagebot_lang', currentLang);
+  document.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('lang-' + currentLang).classList.add('active');
+  const t = I18N[currentLang];
+  document.getElementById('nav-tracker').textContent = t.navTracker;
+  document.getElementById('nav-search').textContent = t.navSearch;
+  document.getElementById('nav-preview').textContent = t.navPreview;
+  document.getElementById('nav-profile').textContent = t.navProfile;
+  document.getElementById('lbl-total').textContent = t.total;
+  document.getElementById('lbl-applied').textContent = t.applied;
+  document.getElementById('lbl-drafted').textContent = t.drafted;
+  document.getElementById('lbl-manual').textContent = t.manual;
+  document.getElementById('btn-report').textContent = t.report;
+  document.getElementById('btn-refresh').textContent = t.refresh;
+  document.getElementById('filter-q').placeholder = t.filterPlaceholder;
+  document.getElementById('opt-all').textContent = t.allStatuses;
+  document.getElementById('th-date').textContent = t.thDate;
+  document.getElementById('th-company').textContent = t.thCompany;
+  document.getElementById('th-role').textContent = t.thRole;
+  document.getElementById('th-status').textContent = t.thStatus;
+  document.getElementById('th-docs').textContent = t.thDocs;
+  document.getElementById('th-actions').textContent = t.thActions;
+  document.getElementById('search-heading').textContent = t.searchHeading;
+  document.getElementById('btn-batch-search').textContent = t.btnSearch;
+  document.getElementById('btn-batch-apply').textContent = t.btnApply;
+  document.getElementById('btn-batch-auto').textContent = t.btnAuto;
+  document.getElementById('lbl-logs').textContent = t.logs;
+  document.getElementById('run-state').textContent = t.idle;
+  if (!document.getElementById('pdf-cv').src) {
+    document.getElementById('preview-label').textContent = t.previewEmpty;
+  }
+  document.getElementById('lbl-master').textContent = t.masterTitle;
+  document.getElementById('btn-sync').textContent = t.syncBtn;
+  document.getElementById('page-title').textContent = t.titles[currentTab] || 'StageBot';
+  renderTable();
+}
+
 function showTab(name, btn) {
+  currentTab = name;
   document.querySelectorAll('section').forEach(s => s.classList.add('hidden'));
   document.getElementById('tab-' + name).classList.remove('hidden');
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  const titles = {tracker:'Suivi des Candidatures', search:'Chercher & Postuler', preview:'Aperçu CV & Lettre de Motivation', profile:'Profil & GitHub'};
-  document.getElementById('page-title').textContent = titles[name] || 'StageBot';
+  document.getElementById('page-title').textContent = I18N[currentLang].titles[name] || 'StageBot';
 }
 
 async function loadApps() {
@@ -165,6 +261,7 @@ async function loadApps() {
 }
 
 function renderTable() {
+  const t = I18N[currentLang];
   const q = document.getElementById('filter-q').value.toLowerCase();
   const st = document.getElementById('filter-status').value;
   const tbody = document.getElementById('apps-tbody');
@@ -183,8 +280,8 @@ function renderTable() {
           ${['drafted','applied','manual_portal','skipped'].map(s => `<option value="${s}" ${r.Status===s?'selected':''}>${s}</option>`).join('')}
         </select>
       </td>
-      <td><button class="secondary" onclick="previewDocs('${r.Company}','${r.CV_PDF || ''}','${r.LM_PDF || ''}')">Voir PDF</button></td>
-      <td><button class="secondary" onclick="openInChrome('${r.CV_PDF || ''}')">Postuler</button></td>
+      <td><button class="secondary" onclick="previewDocs('${encodeURIComponent(r.Company || '')}','${encodeURIComponent(r.CV_PDF || '')}','${encodeURIComponent(r.LM_PDF || '')}')">${t.viewPdf}</button></td>
+      <td><button class="secondary" onclick="openInChrome('${encodeURIComponent(r.CV_PDF || '')}','${encodeURIComponent(r.URL || '')}')">${t.applyBtn}</button></td>
     `;
     tbody.appendChild(tr);
   }
@@ -199,20 +296,25 @@ async function changeStatus(encodedUrl, status) {
   loadApps();
 }
 
-function previewDocs(company, cv, lm) {
-  document.getElementById('preview-label').textContent = `${company} — Documents générés`;
+function previewDocs(companyEnc, cvEnc, lmEnc) {
+  const company = decodeURIComponent(companyEnc);
+  const cv = decodeURIComponent(cvEnc);
+  const lm = decodeURIComponent(lmEnc);
+  document.getElementById('preview-label').textContent = `${company}`;
   document.getElementById('pdf-cv').src = cv ? '/' + cv : '';
   document.getElementById('pdf-lm').src = lm ? '/' + lm : '';
-  showTab('preview', document.querySelectorAll('.nav-btn')[2]);
+  showTab('preview', document.getElementById('nav-preview'));
 }
 
-async function openInChrome(cv_pdf) {
+async function openInChrome(cvEnc, urlEnc) {
+  const cv_pdf = decodeURIComponent(cvEnc);
+  const url = decodeURIComponent(urlEnc);
   await fetch('/api/run', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({action:'open', cv_pdf})
+    body: JSON.stringify({action:'open', cv_pdf, url})
   });
-  showTab('search', document.querySelectorAll('.nav-btn')[1]);
+  showTab('search', document.getElementById('nav-search'));
   pollLogs();
 }
 
@@ -232,20 +334,21 @@ async function runBatch(action) {
 
 async function runSync() {
   await fetch('/api/run', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'sync'})});
-  showTab('search', document.querySelectorAll('.nav-btn')[1]);
+  showTab('search', document.getElementById('nav-search'));
   pollLogs();
 }
 
 let pollTimer = null;
 async function pollLogs() {
   if (pollTimer) clearInterval(pollTimer);
+  const t = I18N[currentLang];
   const tick = async () => {
     const res = await fetch('/api/logs');
     const data = await res.json();
     const el = document.getElementById('live-log');
-    el.textContent = (data.lines || []).join('\n');
+    el.textContent = (data.lines || []).join('\n') || t.ready;
     el.scrollTop = el.scrollHeight;
-    document.getElementById('run-state').textContent = data.running ? 'En cours...' : 'Terminé';
+    document.getElementById('run-state').textContent = data.running ? t.running : t.done;
     if (!data.running) {
       clearInterval(pollTimer);
       loadApps();
@@ -271,6 +374,7 @@ async function loadProfile() {
   }
 }
 
+setLang(currentLang);
 loadApps();
 loadProfile();
 </script>

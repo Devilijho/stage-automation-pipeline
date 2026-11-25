@@ -244,11 +244,18 @@ class StageHandler(BaseHTTPRequestHandler):
                 started = run_background_script(cmd, "Sync GitHub")
             elif action == "open":
                 cv_pdf = body.get("cv_pdf", "")
-                meta_path = WORKSPACE / Path(cv_pdf).parent / "metadata.json"
-                cmd = [PYTHON_BIN, str(SCRIPTS_DIR / "apply_browser.py"), "--meta", str(meta_path)]
-                if body.get("auto"):
-                    cmd.append("--auto")
-                started = run_background_script(cmd, f"Open Chrome for {meta_path.parent.name}")
+                offer_url = body.get("url", "")
+                meta_path = WORKSPACE / Path(cv_pdf).parent / "metadata.json" if cv_pdf else None
+                if meta_path and meta_path.exists():
+                    cmd = [PYTHON_BIN, str(SCRIPTS_DIR / "apply_browser.py"), "--meta", str(meta_path)]
+                    if offer_url:
+                        cmd.extend(["--url", offer_url])
+                    if body.get("auto"):
+                        cmd.append("--auto")
+                    started = run_background_script(cmd, f"Open Chrome for {meta_path.parent.name}")
+                else:
+                    append_log(f"[!] metadata.json not found for cv_pdf={cv_pdf!r}")
+                    started = False
             else:
                 cmd = [PYTHON_BIN, str(SCRIPTS_DIR / "batch_apply.py"), "--limit", limit, "--sources", *sources]
                 if queries:

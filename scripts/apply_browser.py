@@ -344,11 +344,21 @@ def main() -> int:
             result_status = try_auto_submit(active_page)
             update_tracker_status(url, meta["company"], result_status)
             print(f"[+] Auto-mode finished with status: '{result_status}'.")
+        elif not sys.stdin.isatty():
+            print("[*] UI mode: Chrome is open. Review & submit manually, then close the Chrome window when done.")
+            try:
+                while len(context.pages) > 0:
+                    context.pages[0].wait_for_timeout(500)
+            except Exception:
+                pass
         else:
             print("Review the browser form and click 'Envoyer' manually.")
-            status_choice = input(
-                "After submitting (or if redirected to external portal), type status [applied / manual_portal / skipped]: "
-            ).strip().lower()
+            try:
+                status_choice = input(
+                    "After submitting (or if redirected to external portal), type status [applied / manual_portal / skipped]: "
+                ).strip().lower()
+            except EOFError:
+                status_choice = ""
             if status_choice in {"a", "applied"}:
                 status_choice = "applied"
             elif status_choice in {"m", "manual_portal"}:
