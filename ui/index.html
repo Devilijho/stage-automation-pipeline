@@ -111,6 +111,8 @@
         <div class="row" style="margin-bottom:14px;">
           <label><input type="checkbox" id="src-li" checked> LinkedIn</label>
           <label><input type="checkbox" id="src-hw" checked> HelloWork</label>
+          <label><input type="checkbox" id="opt-easy" checked> <span id="lbl-easy">Easy Apply only (LinkedIn)</span></label>
+          <label><input type="checkbox" id="opt-skip-ext" checked> <span id="lbl-skip-ext">Skip external portals</span></label>
         </div>
         <div class="row">
           <button class="secondary" id="btn-batch-search" onclick="runBatch('search')"></button>
@@ -164,6 +166,7 @@ const I18N = {
     thDate: "Date", thCompany: "Entreprise", thRole: "Poste", thStatus: "Statut", thDocs: "Documents", thActions: "Actions",
     viewPdf: "Voir PDF", applyBtn: "Postuler",
     searchHeading: "Lancer une recherche de stages",
+    easyApply: "Candidature simplifiée uniquement (LinkedIn)", skipExternal: "Ignorer portails externes manuels",
     btnSearch: "1. Chercher & Générer CV/LM", btnApply: "2. Lancer File Manuelle (Chrome)", btnAuto: "3. Mode Auto (--auto)",
     logs: "Logs en direct", idle: "Inactif", running: "En cours...", done: "Terminé", ready: "Prêt.",
     previewEmpty: "Sélectionnez une candidature dans l'onglet Candidatures",
@@ -178,6 +181,7 @@ const I18N = {
     thDate: "Fecha", thCompany: "Empresa", thRole: "Puesto", thStatus: "Estado", thDocs: "Documentos", thActions: "Acciones",
     viewPdf: "Ver PDF", applyBtn: "Postular",
     searchHeading: "Buscar prácticas (stages)",
+    easyApply: "Solo Solicitud Sencilla (LinkedIn)", skipExternal: "Omitir portales externos manuales",
     btnSearch: "1. Buscar y Generar CV/Carta", btnApply: "2. Cola Manual (Chrome)", btnAuto: "3. Modo Auto (--auto)",
     logs: "Registros en vivo", idle: "Inactivo", running: "Ejecutando...", done: "Finalizado", ready: "Listo.",
     previewEmpty: "Selecciona una candidatura en la pestaña Candidaturas",
@@ -192,6 +196,7 @@ const I18N = {
     thDate: "Date", thCompany: "Company", thRole: "Role", thStatus: "Status", thDocs: "Documents", thActions: "Actions",
     viewPdf: "View PDF", applyBtn: "Apply",
     searchHeading: "Search for internships",
+    easyApply: "Easy Apply only (LinkedIn)", skipExternal: "Skip external manual portals",
     btnSearch: "1. Search & Generate CV/LM", btnApply: "2. Manual Review Queue (Chrome)", btnAuto: "3. Auto Mode (--auto)",
     logs: "Live Logs", idle: "Idle", running: "Running...", done: "Done", ready: "Ready.",
     previewEmpty: "Select an application from the Applications tab",
@@ -229,6 +234,8 @@ function setLang(lang) {
   document.getElementById('th-docs').textContent = t.thDocs;
   document.getElementById('th-actions').textContent = t.thActions;
   document.getElementById('search-heading').textContent = t.searchHeading;
+  document.getElementById('lbl-easy').textContent = t.easyApply;
+  document.getElementById('lbl-skip-ext').textContent = t.skipExternal;
   document.getElementById('btn-batch-search').textContent = t.btnSearch;
   document.getElementById('btn-batch-apply').textContent = t.btnApply;
   document.getElementById('btn-batch-auto').textContent = t.btnAuto;
@@ -327,10 +334,12 @@ async function runBatch(action) {
   const sources = [];
   if (document.getElementById('src-li').checked) sources.push('linkedin');
   if (document.getElementById('src-hw').checked) sources.push('hellowork');
+  const easy_apply = document.getElementById('opt-easy').checked;
+  const skip_external = document.getElementById('opt-skip-ext').checked;
   await fetch('/api/run', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({action, limit, queries, sources})
+    body: JSON.stringify({action, limit, queries, sources, easy_apply, skip_external})
   });
   pollLogs();
 }

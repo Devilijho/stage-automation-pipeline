@@ -265,6 +265,8 @@ class StageHandler(BaseHTTPRequestHandler):
                         cmd.extend(["--url", offer_url])
                     if body.get("auto"):
                         cmd.append("--auto")
+                    if body.get("skip_external"):
+                        cmd.append("--skip-external")
                     started = run_background_script(cmd, f"Open Chrome for {meta_path.parent.name}")
                 else:
                     append_log(f"[!] metadata.json not found for cv_pdf={cv_pdf!r}")
@@ -277,6 +279,10 @@ class StageHandler(BaseHTTPRequestHandler):
                     cmd.append("--scrape-only")
                 elif action == "auto":
                     cmd.append("--auto")
+                if body.get("easy_apply"):
+                    cmd.append("--easy-apply")
+                if body.get("skip_external"):
+                    cmd.append("--skip-external")
                 started = run_background_script(cmd, f"Batch ({action})")
 
             self.send_json({"started": started})

@@ -100,9 +100,9 @@ def score_offer(title: str, location: str, description: str) -> int:
     return score
 
 
-def scrape_linkedin_paginated(query: str, max_per_query: int) -> List[Dict[str, str]]:
+def scrape_linkedin_paginated(query: str, max_per_query: int, easy_apply: bool = False) -> List[Dict[str, str]]:
     """Paginate LinkedIn's public guest job postings endpoint (no login wall)."""
-    print(f"[*] Searching LinkedIn: '{query}' ...")
+    print(f"[*] Searching LinkedIn{' (Easy Apply only)' if easy_apply else ''}: '{query}' ...")
     offers: List[Dict[str, str]] = []
     seen_hrefs: Set[str] = set()
     start = 0
@@ -112,7 +112,7 @@ def scrape_linkedin_paginated(query: str, max_per_query: int) -> List[Dict[str, 
             f"https://fr.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
             f"?keywords={quote_plus(query)}"
             f"&location={quote_plus(SEARCH_LOCATION_LI)}"
-            f"&f_JT=I&start={start}"
+            f"&f_JT=I{'&f_AL=true' if easy_apply else ''}&start={start}"
         )
         try:
             resp = requests.get(url, headers=HEADERS, timeout=15)
@@ -305,6 +305,16 @@ def main() -> int:
         action="store_true",
         help="Auto-submit simple forms without pausing (marks complex ones as manual_portal)",
     )
+    parser.add_argument(
+        "--easy-apply",
+        action="store_true",
+        help="Filter LinkedIn search to Easy Apply (Candidature simplifiée) only",
+    )
+    parser.add_argument(
+        "--skip-external",
+        action="store_true",
+        help="Skip external ATS redirects that require manual account/form entry",
+    )
     args = parser.parse_args()
 
     existing_urls = load_existing_urls()
@@ -313,7 +323,7 @@ def main() -> int:
 
     for q in args.queries:
         if "linkedin" in args.sources:
-            for o in scrape_linkedin_paginated(q, args.per_query):
+            for o in scrape_linkedin_paginated(q, args.per_query, easy_apply=args.easy_apply):
                 norm = o["url"].rstrip("/").lower()
                 if norm not in existing_urls and norm not in seen_urls:
                     seen_urls.add(norm)
@@ -379,6 +389,8 @@ def main() -> int:
         cmd = [PYTHON_BIN, str(SCRIPTS_DIR / "apply_browser.py"), "--meta", str(meta_path)]
         if args.auto:
             cmd.append("--auto")
+        if args.skip_external:
+            cmd.append("--skip-external")
         res = subprocess.run(cmd, cwd=str(WORKSPACE))
         if res.returncode != 0:
             print("[!] apply_browser.py exited with non-zero status.")

@@ -295,6 +295,11 @@ def main() -> int:
     parser.add_argument("--meta", required=True, help="Path to output/<Company>/metadata.json")
     parser.add_argument("--url", default="", help="Override job URL")
     parser.add_argument("--auto", action="store_true", help="Auto-submit simple forms without pausing")
+    parser.add_argument(
+        "--skip-external",
+        action="store_true",
+        help="Automatically mark external ATS redirects as manual_portal and close without pausing",
+    )
     args = parser.parse_args()
 
     profile = load_json(PROFILE_PATH)
@@ -347,6 +352,13 @@ def main() -> int:
         except Exception as e:
             print(f"[!] Form auto-fill interrupted ({e}); keeping browser open if still active.")
             filled, attached = [], []
+
+        is_external = ats not in {"LinkedIn", "HelloWork", "Welcome to the Jungle"}
+        if args.skip_external and is_external and (len(filled) == 0 and len(attached) == 0):
+            print(f"[*] External portal ({ats}) requires manual registration/fill -> marking 'manual_portal' and skipping.")
+            update_tracker_status(url, meta["company"], "manual_portal")
+            context.close()
+            return 0
 
         print("\n" + "=" * 56)
         print("HUMAN-IN-THE-LOOP GATE — VERIFY BEFORE SUBMITTING")
