@@ -48,6 +48,7 @@
   <button class="nav-btn" id="nav-search" onclick="showTab('search', this)"></button>
   <button class="nav-btn" id="nav-preview" onclick="showTab('preview', this)"></button>
   <button class="nav-btn" id="nav-profile" onclick="showTab('profile', this)"></button>
+  <button class="nav-btn" id="nav-guide" onclick="showTab('guide', this)"></button>
   <div class="stats" id="stats-box">
     <div><span id="lbl-total">Total</span>: <strong id="st-total">0</strong></div>
     <div><span id="lbl-applied">Sent</span>: <strong id="st-applied">0</strong></div>
@@ -154,13 +155,49 @@
         <pre class="log" id="master-md" style="height:65vh;"></pre>
       </div>
     </section>
+
+    <!-- GUIDE / TUTORIAL TAB -->
+    <section id="tab-guide" class="hidden">
+      <div class="card">
+        <h3 id="g-title" style="margin-top:0;"></h3>
+        <p id="g-intro" style="color:var(--muted); margin-bottom:0;"></p>
+      </div>
+      <div class="card">
+        <h4 id="g-s1-t" style="margin-top:0;"></h4>
+        <p id="g-s1-d" style="color:var(--muted);"></p>
+        <div class="row">
+          <button class="primary" id="g-s1-btn" onclick="runLogin(true)"></button>
+          <span id="g-login-status" style="font-size:12px; color:var(--accent);"></span>
+        </div>
+      </div>
+      <div class="card">
+        <h4 id="g-s2-t" style="margin-top:0;"></h4>
+        <p id="g-s2-d" style="color:var(--muted);"></p>
+        <button class="secondary" id="g-s2-btn" onclick="runSync()"></button>
+      </div>
+      <div class="card">
+        <h4 id="g-s3-t" style="margin-top:0;"></h4>
+        <p id="g-s3-d" style="color:var(--muted);"></p>
+        <button class="secondary" id="g-s3-btn" onclick="showTab('search', document.getElementById('nav-search'))"></button>
+      </div>
+      <div class="card">
+        <h4 id="g-s4-t" style="margin-top:0;"></h4>
+        <p id="g-s4-d" style="color:var(--muted);"></p>
+        <button class="secondary" id="g-s4-btn" onclick="showTab('tracker', document.getElementById('nav-tracker'))"></button>
+      </div>
+      <div class="card">
+        <h4 id="g-s5-t" style="margin-top:0;"></h4>
+        <p id="g-s5-d" style="color:var(--muted);"></p>
+        <a href="/api/report" target="_blank"><button class="secondary" id="g-s5-btn"></button></a>
+      </div>
+    </section>
   </div>
 </main>
 
 <script>
 const I18N = {
   fr: {
-    navTracker: "Candidatures", navSearch: "Chercher & Postuler", navPreview: "Aperçu CV & LM", navProfile: "Profil & GitHub",
+    navTracker: "Candidatures", navSearch: "Chercher & Postuler", navPreview: "Aperçu CV & LM", navProfile: "Profil & GitHub", navGuide: "Guide / Démarrer",
     total: "Total", applied: "Envoyés", drafted: "Brouillons", manual: "Portail",
     report: "Justificatif Université (IUT)", refresh: "Actualiser",
     filterPlaceholder: "Filtrer entreprise, poste, mot-clé...", allStatuses: "Tous les statuts",
@@ -172,10 +209,27 @@ const I18N = {
     logs: "Logs en direct", idle: "Inactif", running: "En cours...", done: "Terminé", ready: "Prêt.",
     previewEmpty: "Sélectionnez une candidature dans l'onglet Candidatures",
     masterTitle: "Profil Maître & Dépôts GitHub Vérifiés", syncBtn: "Synchroniser GitHub",
-    titles: {tracker:"Suivi des Candidatures", search:"Chercher & Postuler", preview:"Aperçu CV & Lettre de Motivation", profile:"Profil & GitHub"}
+    gTitle: "Démarrer avec StageBot (Étape par étape)",
+    gIntro: "Suivez ces 5 étapes pour configurer votre session, générer des CV/LM ciblés et postuler efficacement.",
+    gS1T: "Étape 1 — Connecter LinkedIn & HelloWork (à faire 1 fois)",
+    gS1D: "Ouvre le navigateur Chrome persistant pour vous connecter à LinkedIn et HelloWork. Fermez la fenêtre une fois connecté : votre session restera enregistrée.",
+    gS1Btn: "Ouvrir Login Chrome", gLoginMsg: "Chrome ouvert — connectez-vous puis fermez la fenêtre Chrome.",
+    gS2T: "Étape 2 — Synchroniser votre GitHub",
+    gS2D: "Analyse vos dépôts publics/privés et vos commits personnels pour alimenter config/master_profile.md sans jamais inventer de compétences.",
+    gS2Btn: "Synchroniser GitHub",
+    gS3T: "Étape 3 — Chercher des offres & générer CV + LM",
+    gS3D: "Cochez « Candidature simplifiée uniquement » et « Ignorer portails externes » pour éviter les formulaires manuels. Cliquez sur « 1. Chercher & Générer » puis « 2. File Manuelle » (recommandé) ou « 3. Mode Auto ».",
+    gS3Btn: "Aller à Chercher & Postuler",
+    gS4T: "Étape 4 — Vérifier vos candidatures & PDFs",
+    gS4D: "Chaque offre est enregistrée dans data/applications.csv avec son CV et sa Lettre de Motivation dédiés. Mettez à jour le statut (applied / manual_portal / skipped).",
+    gS4Btn: "Voir mes Candidatures",
+    gS5T: "Étape 5 — Exporter le justificatif pour l'IUT",
+    gS5D: "Génère un rapport imprimable avec toutes vos candidatures, dates, URLs et documents envoyés pour votre responsable de stage.",
+    gS5Btn: "Ouvrir le Justificatif Université",
+    titles: {tracker:"Suivi des Candidatures", search:"Chercher & Postuler", preview:"Aperçu CV & Lettre de Motivation", profile:"Profil & GitHub", guide:"Guide de Démarrage"}
   },
   es: {
-    navTracker: "Candidaturas", navSearch: "Buscar y Postular", navPreview: "Vista CV y Carta", navProfile: "Perfil y GitHub",
+    navTracker: "Candidaturas", navSearch: "Buscar y Postular", navPreview: "Vista CV y Carta", navProfile: "Perfil y GitHub", navGuide: "Guía / Inicio",
     total: "Total", applied: "Enviadas", drafted: "Borradores", manual: "Portal",
     report: "Justificante Universidad (IUT)", refresh: "Actualizar",
     filterPlaceholder: "Filtrar empresa, puesto, palabra clave...", allStatuses: "Todos los estados",
@@ -187,10 +241,27 @@ const I18N = {
     logs: "Registros en vivo", idle: "Inactivo", running: "Ejecutando...", done: "Finalizado", ready: "Listo.",
     previewEmpty: "Selecciona una candidatura en la pestaña Candidaturas",
     masterTitle: "Perfil Maestro y Repositorios GitHub Verificados", syncBtn: "Sincronizar GitHub",
-    titles: {tracker:"Seguimiento de Candidaturas", search:"Buscar y Postular", preview:"Vista CV y Carta de Motivación", profile:"Perfil y GitHub"}
+    gTitle: "Cómo empezar con StageBot (Paso a paso)",
+    gIntro: "Sigue estos 5 pasos para guardar tu sesión, generar CVs/Cartas adaptados y postular rápido.",
+    gS1T: "Paso 1 — Iniciar sesión en LinkedIn y HelloWork (1 sola vez)",
+    gS1D: "Abre el navegador Chrome persistente para iniciar sesión en LinkedIn y HelloWork. Cierra esa ventana al terminar: tu sesión quedará guardada.",
+    gS1Btn: "Abrir Login Chrome", gLoginMsg: "Chrome abierto — inicia sesión y cierra la ventana al terminar.",
+    gS2T: "Paso 2 — Sincronizar tu GitHub",
+    gS2D: "Indexa tus repositorios públicos/privados y commits propios en config/master_profile.md sin inventar habilidades.",
+    gS2Btn: "Sincronizar GitHub",
+    gS3T: "Paso 3 — Buscar ofertas y generar CV + Carta",
+    gS3D: "Deja activado « Solo Solicitud Sencilla » y « Omitir portales externos » para evitar formularios manuales. Usa « 1. Buscar » y luego « 2. Cola Manual » (recomendado) o « 3. Modo Auto ».",
+    gS3Btn: "Ir a Buscar y Postular",
+    gS4T: "Paso 4 — Revisar candidaturas y PDFs",
+    gS4D: "Cada oferta se guarda en data/applications.csv con su CV y Carta exactos. Actualiza el estado (applied / manual_portal / skipped).",
+    gS4Btn: "Ver mis Candidaturas",
+    gS5T: "Paso 5 — Exportar justificante para la universidad",
+    gS5D: "Genera un informe imprimible con todas tus ofertas, fechas, enlaces y documentos enviados para mostrar en la IUT.",
+    gS5Btn: "Abrir Justificante Universidad",
+    titles: {tracker:"Seguimiento de Candidaturas", search:"Buscar y Postular", preview:"Vista CV y Carta de Motivación", profile:"Perfil y GitHub", guide:"Guía de Inicio"}
   },
   en: {
-    navTracker: "Applications", navSearch: "Search & Apply", navPreview: "CV & Letter Preview", navProfile: "Profile & GitHub",
+    navTracker: "Applications", navSearch: "Search & Apply", navPreview: "CV & Letter Preview", navProfile: "Profile & GitHub", navGuide: "Guide / Start",
     total: "Total", applied: "Applied", drafted: "Drafts", manual: "Portal",
     report: "University Proof Report", refresh: "Refresh",
     filterPlaceholder: "Filter company, role, keyword...", allStatuses: "All statuses",
@@ -202,7 +273,24 @@ const I18N = {
     logs: "Live Logs", idle: "Idle", running: "Running...", done: "Done", ready: "Ready.",
     previewEmpty: "Select an application from the Applications tab",
     masterTitle: "Master Profile & Verified GitHub Repos", syncBtn: "Sync GitHub",
-    titles: {tracker:"Application Tracker", search:"Search & Apply", preview:"CV & Cover Letter Preview", profile:"Profile & GitHub"}
+    gTitle: "Getting Started with StageBot (Step-by-Step)",
+    gIntro: "Follow these 5 steps to save your login session, generate tailored CVs/Letters, and apply cleanly.",
+    gS1T: "Step 1 — Log into LinkedIn & HelloWork (one-time setup)",
+    gS1D: "Opens the persistent Chrome profile to LinkedIn and HelloWork. Log in and close that Chrome window—your session stays saved for future runs.",
+    gS1Btn: "Open Login Chrome", gLoginMsg: "Chrome opened — sign in, then close the Chrome window when done.",
+    gS2T: "Step 2 — Sync your GitHub repositories",
+    gS2D: "Indexes your public/private repos and personal commits into config/master_profile.md without inventing any skills.",
+    gS2Btn: "Sync GitHub",
+    gS3T: "Step 3 — Search offers & generate tailored CV + Letter",
+    gS3D: "Keep 'Easy Apply only' and 'Skip external manual portals' checked to avoid tedious external forms. Run '1. Search' then '2. Manual Review Queue' (recommended) or '3. Auto Mode'.",
+    gS3Btn: "Go to Search & Apply",
+    gS4T: "Step 4 — Review tracked applications & PDFs",
+    gS4D: "Every offer is logged in data/applications.csv alongside its tailored CV and Cover Letter PDFs. Update status anytime (applied / manual_portal / skipped).",
+    gS4Btn: "View Applications",
+    gS5T: "Step 5 — Export University Proof Report",
+    gS5D: "Generates a printable report of all applications, dates, URLs, and attached PDFs to show your university coordinator.",
+    gS5Btn: "Open University Report",
+    titles: {tracker:"Application Tracker", search:"Search & Apply", preview:"CV & Cover Letter Preview", profile:"Profile & GitHub", guide:"Getting Started Guide"}
   }
 };
 
@@ -220,6 +308,7 @@ function setLang(lang) {
   document.getElementById('nav-search').textContent = t.navSearch;
   document.getElementById('nav-preview').textContent = t.navPreview;
   document.getElementById('nav-profile').textContent = t.navProfile;
+  document.getElementById('nav-guide').textContent = t.navGuide;
   document.getElementById('lbl-total').textContent = t.total;
   document.getElementById('lbl-applied').textContent = t.applied;
   document.getElementById('lbl-drafted').textContent = t.drafted;
@@ -247,6 +336,23 @@ function setLang(lang) {
   }
   document.getElementById('lbl-master').textContent = t.masterTitle;
   document.getElementById('btn-sync').textContent = t.syncBtn;
+  document.getElementById('g-title').textContent = t.gTitle;
+  document.getElementById('g-intro').textContent = t.gIntro;
+  document.getElementById('g-s1-t').textContent = t.gS1T;
+  document.getElementById('g-s1-d').textContent = t.gS1D;
+  document.getElementById('g-s1-btn').textContent = t.gS1Btn;
+  document.getElementById('g-s2-t').textContent = t.gS2T;
+  document.getElementById('g-s2-d').textContent = t.gS2D;
+  document.getElementById('g-s2-btn').textContent = t.gS2Btn;
+  document.getElementById('g-s3-t').textContent = t.gS3T;
+  document.getElementById('g-s3-d').textContent = t.gS3D;
+  document.getElementById('g-s3-btn').textContent = t.gS3Btn;
+  document.getElementById('g-s4-t').textContent = t.gS4T;
+  document.getElementById('g-s4-d').textContent = t.gS4D;
+  document.getElementById('g-s4-btn').textContent = t.gS4Btn;
+  document.getElementById('g-s5-t').textContent = t.gS5T;
+  document.getElementById('g-s5-d').textContent = t.gS5D;
+  document.getElementById('g-s5-btn').textContent = t.gS5Btn;
   document.getElementById('page-title').textContent = t.titles[currentTab] || 'StageBot';
   renderTable();
 }
@@ -350,10 +456,14 @@ async function stopTask() {
   pollLogs();
 }
 
-async function runLogin() {
+async function runLogin(stayOnGuide = false) {
   await fetch('/api/run', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'login'})});
-  showTab('search', document.getElementById('nav-search'));
-  pollLogs();
+  if (stayOnGuide) {
+    document.getElementById('g-login-status').textContent = I18N[currentLang].gLoginMsg;
+  } else {
+    showTab('guide', document.getElementById('nav-guide'));
+    document.getElementById('g-login-status').textContent = I18N[currentLang].gLoginMsg;
+  }
 }
 
 async function runSync() {
