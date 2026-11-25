@@ -270,6 +270,70 @@ async def fill_matching_fields(page: Page, answers: Dict[str, str]) -> List[str]
     return filled
 
 
+async def try_fill_date_or_calendar(page: Page, el, is_end: bool) -> Optional[str]:
+    """Fill <input type='date'>, text date input, or click through a calendar selection table."""
+    iso_val = "2026-07-16" if is_end else "2026-05-03"
+    fr_val = "16/07/2026" if is_end else "03/05/2026"
+    target_day = "16" if is_end else "3"
+    target_month_idx = "6" if is_end else "4"  # 0-based: May=4, July=6
+    target_month_names = ("juillet", "july") if is_end else ("mai", "may")
+
+    itype = (await el.get_attribute("type") or "text").lower()
+    if itype == "date":
+        await el.fill(iso_val)
+        return iso_val
+
+    is_readonly = await el.get_attribute("readonly") is not None
+    if not is_readonly:
+        try:
+            await el.fill(fr_val)
+            await el.press("Escape")
+            if (await el.input_value() or "").strip():
+                return fr_val
+        except Exception:
+            pass
+
+    # Click to open calendar selection table (datepicker popup)
+    try:
+        await el.click()
+        await page.wait_for_timeout(400)
+        cal = page.locator("[role='grid']:visible, table:has(td):visible, .artdeco-datepicker:visible").last
+        if await cal.count() > 0 and await cal.is_visible(timeout=800):
+            # Try month/year <select> inside calendar container if present
+            parent = cal.locator("xpath=ancestor::div[1]").first
+            for sel in await parent.locator("select:visible").all():
+                opts = [await o.inner_text() for o in await sel.locator("option").all()]
+                if any("2026" in o for o in opts):
+                    await sel.select_option(label=next(o for o in opts if "2026" in o))
+                elif any(m in o.lower() for o in opts for m in target_month_names):
+                    m_lbl = next(o for o in opts if any(m in o.lower() for m in target_month_names))
+                    await sel.select_option(label=m_lbl)
+
+            # Advance next-month arrow up to 8 times until target month appears
+            for _ in range(8):
+                cal_txt = (await parent.inner_text()).lower()
+                if any(m in cal_txt for m in target_month_names) and "2026" in cal_txt:
+                    break
+                nxt = parent.locator("button[aria-label*='next' i], button[aria-label*='suivant' i], button:has-text('>')").first
+                if await nxt.count() > 0 and await nxt.is_visible(timeout=300):
+                    await nxt.click()
+                    await page.wait_for_timeout(200)
+                else:
+                    break
+
+            # Click exact day cell
+            day_btn = cal.locator(
+                f"button:text-is('{target_day}'), td:text-is('{target_day}'), [data-month='{target_month_idx}'] button:text-is('{target_day}')"
+            ).first
+            if await day_btn.count() > 0 and await day_btn.is_visible(timeout=500):
+                await day_btn.click()
+                await page.wait_for_timeout(300)
+                return f"calendar -> {fr_val}"
+    except Exception:
+        pass
+    return None
+
+
 async def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[str]:
     answered: List[str] = []
     root = await get_form_root(page)
@@ -308,8 +372,16 @@ async def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[s
                     val = "1"
                 elif any(k in q for k in ("durée", "duration", "combien de mois", "months")):
                     val = "3" if is_num else answers.get("duree", "3 mois")
-                elif any(k in q for k in ("date de début", "start date", "quand pouvez", "when can you", "disponib")):
-                    val = "2026-05-03" if itype == "date" else "03/05/2026"
+                elif any(k in q for k in ("date de fin", "end date", "jusqu", "to date", "fin de stage")):
+                    res_date = await try_fill_date_or_calendar(page, el, is_end=True)
+                    if res_date:
+                        answered.append(f"end_date -> {res_date}")
+                        continue
+                elif any(k in q for k in ("date de début", "start date", "quand pouvez", "when can you", "disponib", "à partir", "date")):
+                    res_date = await try_fill_date_or_calendar(page, el, is_end=False)
+                    if res_date:
+                        answered.append(f"start_date -> {res_date}")
+                        continue
                 elif any(k in q for k in ("salaire", "rémunération", "gratification", "salary", "compensation")):
                     val = "800" if is_num else "Gratification légale"
                 elif any(k in q for k in ("ville", "city", "localisation")):
