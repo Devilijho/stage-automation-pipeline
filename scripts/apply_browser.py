@@ -227,47 +227,80 @@ def fill_matching_fields(page: Page, answers: Dict[str, str]) -> List[str]:
 
 def inject_files(page: Page, cv_pdf: Path, lm_pdf: Path) -> List[str]:
     attached: List[str] = []
-    file_inputs = page.locator("input[type='file']")
-    count = file_inputs.count()
-    for i in range(count):
-        el = file_inputs.nth(i)
-        try:
-            hint = " ".join(
-                filter(
-                    None,
-                    [
-                        el.get_attribute("name"),
-                        el.get_attribute("id"),
-                        el.get_attribute("aria-label"),
-                        el.get_attribute("data-qa"),
-                        el.get_attribute("class"),
-                    ],
-                )
-            ).lower()
-            el_id = el.get_attribute("id")
-            if el_id:
-                lbl = page.locator(f"label[for='{el_id}']").first
-                if lbl.count() > 0:
-                    hint += " " + lbl.inner_text().lower()
 
-            if any(k in hint for k in ["lettre", "motivation", "cover", "lm"]):
-                el.set_input_files(str(lm_pdf))
-                el.dispatch_event("change")
-                attached.append(f"LM -> {lm_pdf.name}")
-            elif any(k in hint for k in ["cv", "resume", "curriculum"]):
-                el.set_input_files(str(cv_pdf))
-                el.dispatch_event("change")
-                attached.append(f"CV -> {cv_pdf.name}")
-            elif i == 0:
-                el.set_input_files(str(cv_pdf))
-                el.dispatch_event("change")
-                attached.append(f"CV (slot 0) -> {cv_pdf.name}")
-            elif i == 1:
-                el.set_input_files(str(lm_pdf))
-                el.dispatch_event("change")
-                attached.append(f"LM (slot 1) -> {lm_pdf.name}")
+    # 1. Direct <input type='file'> on main page or any iframe
+    contexts_to_check = [page, *[f for f in page.frames if f != page.main_frame]]
+    for ctx in contexts_to_check:
+        try:
+            file_inputs = ctx.locator("input[type='file']")
+            count = file_inputs.count()
         except Exception:
             continue
+        for i in range(count):
+            el = file_inputs.nth(i)
+            try:
+                hint = " ".join(
+                    filter(
+                        None,
+                        [
+                            el.get_attribute("name"),
+                            el.get_attribute("id"),
+                            el.get_attribute("aria-label"),
+                            el.get_attribute("data-qa"),
+                            el.get_attribute("class"),
+                        ],
+                    )
+                ).lower()
+                el_id = el.get_attribute("id")
+                if el_id:
+                    lbl = ctx.locator(f"label[for='{el_id}']").first
+                    if lbl.count() > 0:
+                        hint += " " + lbl.inner_text().lower()
+
+                if any(k in hint for k in ["lettre", "motivation", "cover", "lm"]):
+                    el.set_input_files(str(lm_pdf))
+                    el.dispatch_event("change")
+                    attached.append(f"LM -> {lm_pdf.name}")
+                elif any(k in hint for k in ["cv", "resume", "curriculum"]):
+                    el.set_input_files(str(cv_pdf))
+                    el.dispatch_event("change")
+                    attached.append(f"CV -> {cv_pdf.name}")
+                elif i == 0:
+                    el.set_input_files(str(cv_pdf))
+                    el.dispatch_event("change")
+                    attached.append(f"CV (slot 0) -> {cv_pdf.name}")
+                elif i == 1:
+                    el.set_input_files(str(lm_pdf))
+                    el.dispatch_event("change")
+                    attached.append(f"LM (slot 1) -> {lm_pdf.name}")
+            except Exception:
+                continue
+
+    # 2. Fallback: LinkedIn Easy Apply / React upload buttons via FileChooser
+    if not attached:
+        upload_selectors = [
+            "label:has-text('Importer un CV'):visible",
+            "button:has-text('Importer un CV'):visible",
+            "label:has-text('Upload resume'):visible",
+            "button:has-text('Upload resume'):visible",
+            "button:has-text('Télécharger un CV'):visible",
+            "label:has-text('Télécharger un CV'):visible",
+            "button[aria-label*='Importer' i]:visible",
+            "button[aria-label*='Upload resume' i]:visible",
+        ]
+        for sel in upload_selectors:
+            try:
+                btn = page.locator(sel).first
+                if btn.is_visible(timeout=700):
+                    with page.expect_file_chooser(timeout=3000) as fc_info:
+                        btn.click()
+                    fc_info.value.set_files(str(cv_pdf))
+                    attached.append(f"CV (chooser) -> {cv_pdf.name}")
+                    page.wait_for_timeout(1200)
+                    break
+            except Exception:
+                continue
+
     return attached
 
 
