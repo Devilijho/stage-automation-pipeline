@@ -695,7 +695,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Playwright Browser Application Assistant")
     parser.add_argument("--meta", help="Path to output/<Company>/metadata.json")
     parser.add_argument("--metas", nargs="+", help="Multiple metadata.json paths to process in 1 Chrome window")
-    parser.add_argument("--tabs", type=int, default=3, help="Concurrent tabs per batch in --metas mode")
+    parser.add_argument("--tabs", type=int, default=4, help="Concurrent tabs per batch in --metas mode")
     parser.add_argument("--url", default="", help="Override job URL")
     parser.add_argument("--auto", action="store_true", help="Auto-submit simple forms without pausing")
     parser.add_argument(
@@ -757,46 +757,126 @@ def main() -> int:
             viewport={"width": 1280, "height": 860},
         )
 
-        # Multi-tab batch mode inside 1 persistent Chrome window
+        # True concurrent multi-tab batch mode inside 1 persistent Chrome window
         if len(meta_paths) > 1:
             batch_size = max(1, args.tabs)
             for start in range(0, len(meta_paths), batch_size):
                 chunk = meta_paths[start : start + batch_size]
-                print(f"\n=== Opening batch of {len(chunk)} tab(s) ({start + 1}-{start + len(chunk)}/{len(meta_paths)}) ===")
-                opened_tabs: List[Tuple[Page, Dict[str, Any], str]] = []
+                print(f"\n=== Opening {len(chunk)} tabs simultaneously ({start + 1}-{start + len(chunk)}/{len(meta_paths)}) ===")
+
+                # Phase 1: Open & navigate all N tabs at once
+                tabs: List[Dict[str, Any]] = []
                 for idx_in_chunk, mp in enumerate(chunk):
                     meta = load_json(mp)
                     u = meta.get("url", "")
                     if not u:
                         continue
                     pg = context.pages[0] if (idx_in_chunk == 0 and context.pages) else context.new_page()
-                    active_pg, st = run_single_offer_on_page(
-                        context, pg, profile, meta, u, auto=args.auto, skip_external=args.skip_external
-                    )
-                    if args.auto and not active_pg.is_closed() and len(context.pages) > 1:
+                    print(f"  [*] [{meta['company']}] Loading {u}")
+                    try:
+                        pg.goto(u, wait_until="domcontentloaded", timeout=30000)
+                    except Exception as e:
+                        print(f"  [!] [{meta['company']}] Load error: {e}")
+                    tabs.append({"page": pg, "meta": meta, "url": u, "done": False})
+
+                if tabs:
+                    tabs[0]["page"].wait_for_timeout(1500)
+
+                # Phase 2: Dismiss cookies & click Apply on all N tabs
+                for item in tabs:
+                    pg = item["page"]
+                    meta = item["meta"]
+                    if pg.is_closed():
+                        item["done"] = True
+                        continue
+                    accept_cookies_if_present(pg)
+                    active_pg, clicked = click_apply_and_follow_redirect(context, pg)
+                    if active_pg.is_closed() and context.pages:
+                        active_pg = context.pages[-1]
+                    item["page"] = active_pg
+                    if active_pg.is_closed():
+                        item["done"] = True
+                        continue
+                    ats = detect_ats_provider(active_pg.url)
+                    item["ats"] = ats
+                    print(f"  [*] [{meta['company']}] Apply clicked: {clicked} | Target: {ats}")
+
+                    if any(k in active_pg.url.lower() for k in ("authwall", "/login", "connexion", "signin")):
+                        print(f"  [!] [{meta['company']}] Login wall -> manual_portal")
+                        update_tracker_status(item["url"], meta["company"], "manual_portal")
+                        item["done"] = True
+
+                # Phase 3: Step through forms across all active tabs in parallel
+                for step in range(1, 7):
+                    active_items = [it for it in tabs if not it["done"] and not it["page"].is_closed()]
+                    if not active_items:
+                        break
+                    for it in active_items:
+                        pg = it["page"]
+                        meta = it["meta"]
+                        cv_pdf = Path(meta["cv_pdf"])
+                        lm_pdf = Path(meta["lm_pdf"])
                         try:
-                            active_pg.close()
+                            filled = fill_matching_fields(pg, profile["form_answers"])
+                            filled.extend(answer_common_questions(pg, profile["form_answers"]))
+                            attached = inject_files(pg, cv_pdf, lm_pdf)
+                            if attached:
+                                pg.wait_for_timeout(600)
+
+                            is_external = it.get("ats", "") not in {"LinkedIn", "HelloWork", "Welcome to the Jungle"}
+                            if step == 1 and args.skip_external and is_external and len(filled) == 0 and len(attached) == 0:
+                                print(f"  [*] [{meta['company']}] External portal ({it.get('ats')}) -> skipping (manual_portal)")
+                                update_tracker_status(it["url"], meta["company"], "manual_portal")
+                                it["done"] = True
+                                continue
+
+                            submit_btn = find_submit_button(pg)
+                            if submit_btn is not None:
+                                uncheck_follow_company(pg)
+                                if args.auto:
+                                    submit_btn.click()
+                                    pg.wait_for_timeout(1500)
+                                    update_tracker_status(it["url"], meta["company"], "applied")
+                                    print(f"  [+] [{meta['company']}] Submitted -> 'applied'!")
+                                else:
+                                    print(f"  [*] [{meta['company']}] Ready for your review on tab.")
+                                it["done"] = True
+                                continue
+
+                            if not try_click_next_step(pg):
+                                if args.auto:
+                                    update_tracker_status(it["url"], meta["company"], "manual_portal")
+                                it["done"] = True
+                        except Exception as e:
+                            print(f"  [!] [{meta['company']}] Step {step} error: {e}")
+                            it["done"] = True
+
+                # Phase 4: Close finished tabs in auto mode, or wait for manual review
+                if args.auto:
+                    for it in tabs:
+                        if not it["page"].is_closed() and len(context.pages) > 1:
+                            try:
+                                it["page"].close()
+                            except Exception:
+                                pass
+                else:
+                    open_review = [it for it in tabs if not it["page"].is_closed()]
+                    if open_review:
+                        print(f"[*] {len(open_review)} tab(s) open for manual review. Submit & close tabs when done.")
+                        confirmed_urls = set()
+                        try:
+                            while any(not it["page"].is_closed() for it in open_review):
+                                for it in open_review:
+                                    if it["url"] not in confirmed_urls and check_submission_confirmed(it["page"]):
+                                        confirmed_urls.add(it["url"])
+                                        update_tracker_status(it["url"], it["meta"]["company"], "applied")
+                                        print(f"  [+] Confirmed submission for {it['meta']['company']}! Marked 'applied'.")
+                                if context.pages:
+                                    context.pages[0].wait_for_timeout(500)
+                                else:
+                                    break
                         except Exception:
                             pass
-                    elif not args.auto and not active_pg.is_closed():
-                        opened_tabs.append((active_pg, meta, u))
-
-                if not args.auto and opened_tabs:
-                    print(f"[*] {len(opened_tabs)} tab(s) ready for your manual review. Submit & close tabs when done.")
-                    confirmed_urls = set()
-                    try:
-                        while any(not pg.is_closed() for pg, _, _ in opened_tabs):
-                            for pg, meta, u in opened_tabs:
-                                if u not in confirmed_urls and check_submission_confirmed(pg):
-                                    confirmed_urls.add(u)
-                                    update_tracker_status(u, meta["company"], "applied")
-                                    print(f"[+] Confirmed submission for {meta['company']}! Marked 'applied'.")
-                            if context.pages:
-                                context.pages[0].wait_for_timeout(500)
-                            else:
-                                break
-                    except Exception:
-                        pass
             context.close()
             return 0
 

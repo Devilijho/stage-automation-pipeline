@@ -412,7 +412,7 @@ def main() -> int:
         "--metas",
         *[str(mp) for mp in queue_metas],
         "--tabs",
-        "3",
+        "4",
     ]
     if args.auto:
         cmd.append("--auto")
