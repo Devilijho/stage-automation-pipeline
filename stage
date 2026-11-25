@@ -47,6 +47,10 @@ case "$cmd" in
     # Open persistent Chrome profile to log into LinkedIn & HelloWork once
     exec "$PY" "$ROOT_DIR/scripts/apply_browser.py" --login
     ;;
+  mail)
+    # Find local tech companies near Bures-sur-Yvette/Saclay & create .eml drafts with CV+LM attached
+    exec "$PY" "$ROOT_DIR/scripts/spontaneous_mail.py" "$@"
+    ;;
   ui)
     # Launch the macOS StageBot Web UI
     exec "$PY" "$ROOT_DIR/scripts/ui_server.py" "$@"
@@ -80,6 +84,7 @@ Stage Application Pipeline — Simple Commands
   ./stage search [--limit 12]      Search offers & generate tailored CV/LM PDFs
   ./stage apply  [--limit 8]       Search + tailor + open manual-review Chrome queue
   ./stage auto   [--limit 8]       Search + tailor + auto-submit simple forms
+  ./stage mail   [--limit 5]       Find local tech companies & build .eml drafts
   ./stage open   <Company>         Open Chrome assistant for an already-tailored company
   ./stage tailor --url <URL>       Tailor CV & LM for one specific job URL
   ./stage sync                     Re-index GitHub repos into config/master_profile.md

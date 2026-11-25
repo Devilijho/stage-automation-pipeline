@@ -440,26 +440,46 @@ def get_label_text(page: Page, el) -> str:
     return " ".join(parts).lower()
 
 
+def get_form_root(page: Page):
+    """Scope queries to LinkedIn Easy Apply modal when open so we don't touch the navbar search box."""
+    try:
+        modal = page.locator(".jobs-easy-apply-modal, div[role='dialog'][aria-modal='true']").first
+        if modal.count() > 0 and modal.is_visible(timeout=400):
+            return modal
+    except Exception:
+        pass
+    return page
+
+
 def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[str]:
     """Handle LinkedIn Easy Apply text/number questions, <select> dropdowns, radios, and checkboxes."""
     answered: List[str] = []
+    root = get_form_root(page)
 
-    # 1. Text & numeric screening inputs (experience years, dates, duration, salary)
+    # 1. Text & numeric screening inputs (experience years, dates, duration, salary, SmartRecruiters work history)
     try:
-        inputs = page.locator("input:visible, textarea:visible")
+        inputs = root.locator("input:visible, textarea:visible")
         for i in range(inputs.count()):
             el = inputs.nth(i)
             try:
                 itype = (el.get_attribute("type") or "text").lower()
-                if itype in {"hidden", "file", "submit", "button", "checkbox", "radio"}:
+                if itype in {"hidden", "file", "submit", "button", "checkbox", "radio", "search"}:
                     continue
                 if (el.input_value() or "").strip():
                     continue
                 q = get_label_text(page, el)
+                if "search" in q and "job" not in q:
+                    continue
                 is_num = itype == "number" or "numeric" in (el.get_attribute("inputmode") or "")
 
                 val = ""
-                if any(k in q for k in ("année", "années", "years", "combien d'exp", "how long", "how many years")):
+                if any(k in q for k in ("your title", "votre titre", "intitulé du poste")):
+                    val = "Étudiant BUT 2 Informatique / Développeur (École 42)"
+                elif any(k in q for k in ("company", "entreprise", "société")) and "linkedin" not in q:
+                    val = "École 42 Paris / IUT d'Orsay"
+                elif "description" in q:
+                    val = "Développement C/C++/TypeScript, systèmes Linux, Docker, SQL, réseaux et sécurité (projets Webserv, Transcendence, Chaski-Booking)."
+                elif any(k in q for k in ("année", "années", "years", "combien d'exp", "how long", "how many years")):
                     val = "1"
                 elif any(k in q for k in ("durée", "duration", "combien de mois", "months")):
                     val = "3" if is_num else answers.get("duree", "3 mois")
@@ -474,7 +494,7 @@ def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[str]:
 
                 if val:
                     el.fill(val)
-                    answered.append(f"input -> {val}")
+                    answered.append(f"input -> {val[:30]}")
                 elif q.strip():
                     print(f"  [?] Unanswered input: {q.strip()[:90]}")
             except Exception:
@@ -484,7 +504,7 @@ def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[str]:
 
     # 2. Select dropdowns (country code, Oui/Yes, English/French proficiency, education)
     try:
-        selects = page.locator("select:visible")
+        selects = root.locator("select:visible")
         for i in range(selects.count()):
             sel = selects.nth(i)
             try:
@@ -510,18 +530,18 @@ def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[str]:
     except Exception:
         pass
 
-    # 3. Radio groups (Oui/Yes for authorization/convention, Non/No for visa/sponsorship)
+    # 3. Radio groups (read ancestor container text so 'yes / no' radios have question context)
     try:
-        fieldsets = page.locator("fieldset:visible")
+        fieldsets = root.locator("fieldset:visible")
         for i in range(fieldsets.count()):
             fs = fieldsets.nth(i)
             try:
                 if fs.locator("input[type='radio']:checked").count() > 0:
                     continue
-                legend = fs.inner_text().lower()
-                if any(k in legend for k in ("visa", "sponsor")):
+                legend = get_label_text(page, fs) + " " + fs.inner_text().lower()
+                if any(k in legend for k in ("visa", "sponsor", "handicap", "disability")):
                     choices = ("Non", "No")
-                elif any(k in legend for k in ("autoris", "légale", "work", "france", "stage", "convention", "disponib", "majeur", "bac+", "hybride", "présentiel")):
+                elif any(k in legend for k in ("autoris", "légale", "work", "france", "stage", "convention", "disponib", "majeur", "bac+", "hybride", "présentiel", "remote", "english", "french", "français", "anglais", "degree", "diplôme")):
                     choices = ("Oui", "Yes")
                 else:
                     print(f"  [?] Unanswered radio: {legend.strip()[:90]}")
@@ -540,7 +560,7 @@ def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[str]:
 
     # 4. Required privacy/terms checkboxes (never check marketing/newsletter)
     try:
-        cbs = page.locator("input[type='checkbox']:visible")
+        cbs = root.locator("input[type='checkbox']:visible")
         for i in range(cbs.count()):
             cb = cbs.nth(i)
             try:

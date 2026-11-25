@@ -86,6 +86,12 @@ def score_offer(title: str, location: str, description: str) -> int:
     if any(bad in t_low for bad in EXCLUDE_TITLE_TERMS) and "stage" not in t_low:
         return -100
 
+    # Filter out Bac+5 / PFE / Fin d'études unless Bac+2/3 or BUT is explicitly accepted
+    is_but_friendly = any(k in d_low or k in t_low for k in ("but 2", "but 3", "but2", "but3", "bac+2", "bac +2", "bac+3", "bac +3", "iut", "dut", "2ème année", "3ème année"))
+    is_pfe_or_m2 = any(k in t_low or k in d_low for k in ("pfe", "fin d'études", "fin d'etudes", "bac+5", "bac +5", "master 2", "élève-ingénieur"))
+    if is_pfe_or_m2 and not is_but_friendly:
+        return -50
+
     score = 0
     if "stage" in t_low or "intern" in t_low or "stagiaire" in t_low:
         score += 10
@@ -94,9 +100,7 @@ def score_offer(title: str, location: str, description: str) -> int:
             score += 4
     for lvl in LEVEL_BOOST:
         if lvl in d_low or lvl in t_low:
-            score += 6
-    if "bac+5" in d_low and not any(k in d_low for k in ("bac+2", "bac+3", "but 2", "but 3")):
-        score -= 4
+            score += 8
     return score
 
 
