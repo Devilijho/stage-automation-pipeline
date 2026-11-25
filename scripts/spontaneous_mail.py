@@ -104,10 +104,13 @@ def main() -> int:
             f"Candidature spontanée stage informatique {c['name']} à {c['city']}. "
             f"Développement logiciel, TypeScript, C, C++, Linux, Docker, Git, SQL, API REST."
         )
+        slug = "".join(ch if ch.isalnum() else "_" for ch in c["name"]).strip("_")
         res = subprocess.run(
             [
                 PYTHON_BIN,
                 str(SCRIPTS_DIR / "tailor.py"),
+                "--url",
+                f"spontaneous://{slug}",
                 "--company",
                 c["name"],
                 "--role",

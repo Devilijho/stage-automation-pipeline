@@ -48,7 +48,8 @@
   <div class="brand">StageBot</div>
   <div class="sub" id="sidebar-sub">Loading...</div>
   <button class="nav-btn active" id="nav-guide" onclick="showTab('guide', this)"></button>
-  <button class="nav-btn" id="nav-search" onclick="showTab('search', this)"></button>
+  <button class="nav-btn" id="nav-fetch" onclick="showTab('fetch', this)"></button>
+  <button class="nav-btn" id="nav-apply" onclick="showTab('apply', this)"></button>
   <button class="nav-btn" id="nav-tracker" onclick="showTab('tracker', this)"></button>
   <button class="nav-btn" id="nav-preview" onclick="showTab('preview', this)"></button>
   <button class="nav-btn" id="nav-profile" onclick="showTab('profile', this)"></button>
@@ -105,10 +106,11 @@
       </div>
     </section>
 
-    <!-- SEARCH TAB -->
-    <section id="tab-search" class="hidden">
+    <!-- 2. FETCH OFFERS TAB -->
+    <section id="tab-fetch" class="hidden">
       <div class="card">
-        <h3 id="search-heading" style="margin-top:0; margin-bottom:12px;"></h3>
+        <h3 id="fetch-heading" style="margin-top:0; margin-bottom:6px;"></h3>
+        <p id="fetch-desc" style="font-size:12px; color:var(--muted); margin-top:0; margin-bottom:14px;"></p>
         <div class="row" style="margin-bottom:12px;">
           <input id="q-input" value="" style="flex:1;">
           <select id="q-limit" style="width:110px;">
@@ -117,46 +119,54 @@
             <option value="20">20 offers</option>
           </select>
         </div>
-        <div class="row" style="margin-bottom:14px; justify-content:space-between;">
+        <div class="row" style="margin-bottom:14px;">
           <div class="pill-group">
             <button class="pill active" id="pill-li" onclick="this.classList.toggle('active')">LinkedIn (Easy Apply)</button>
             <button class="pill" id="pill-hw" onclick="this.classList.toggle('active')">HelloWork</button>
-            <button class="pill active" id="pill-skip" onclick="this.classList.toggle('active')"><span id="lbl-skip-ext"></span></button>
           </div>
+        </div>
+        <button class="primary" id="btn-fetch" onclick="launchFetch()"></button>
+      </div>
+      <div class="card">
+        <div class="row" style="justify-content:space-between; margin-bottom:8px;">
+          <strong id="lbl-logs-fetch"></strong>
+          <div class="row">
+            <span id="run-state-fetch" style="font-size:12px; color:var(--muted);"></span>
+            <button class="secondary" onclick="stopTask()" style="padding:4px 10px; font-size:12px;">Stop</button>
+          </div>
+        </div>
+        <pre class="log" id="live-log-fetch"></pre>
+      </div>
+    </section>
+
+    <!-- 3. APPLY TAB -->
+    <section id="tab-apply" class="hidden">
+      <div class="card">
+        <div class="row" style="justify-content:space-between; margin-bottom:12px;">
+          <strong id="apply-mode-title"></strong>
           <div class="pill-group">
             <button class="pill active" id="mode-auto" onclick="setRunMode('auto')"><span id="lbl-m-auto"></span></button>
             <button class="pill" id="mode-apply" onclick="setRunMode('apply')"><span id="lbl-m-apply"></span></button>
-            <button class="pill" id="mode-search" onclick="setRunMode('search')"><span id="lbl-m-search"></span></button>
+            <button class="pill active" id="pill-skip" onclick="this.classList.toggle('active')"><span id="lbl-skip-ext"></span></button>
           </div>
         </div>
-        <div class="row">
-          <button class="primary" id="btn-launch" onclick="launchSearch()"></button>
+        <div class="row" style="gap:10px;">
+          <button class="primary" id="btn-retry-drafted" onclick="runRetry('drafted')"></button>
+          <button class="secondary" id="btn-retry-manual" onclick="runRetry('manual_portal')"></button>
           <button class="secondary" id="btn-mail" onclick="runMail()"></button>
         </div>
-      </div>
-
-      <div class="card">
-        <div class="row" style="justify-content:space-between;">
-          <div>
-            <strong id="retry-heading"></strong>
-            <div id="retry-desc" style="font-size:12px; color:var(--muted); margin-top:2px;"></div>
-          </div>
-          <div class="row">
-            <button class="secondary" id="btn-retry-drafted" onclick="runRetry('drafted')"></button>
-            <button class="secondary" id="btn-retry-manual" onclick="runRetry('manual_portal')"></button>
-          </div>
-        </div>
+        <div id="apply-hint" style="font-size:12px; color:var(--muted); margin-top:10px;"></div>
       </div>
 
       <div class="card">
         <div class="row" style="justify-content:space-between; margin-bottom:8px;">
-          <strong id="lbl-logs"></strong>
+          <strong id="lbl-logs-apply"></strong>
           <div class="row">
-            <span id="run-state" style="font-size:12px; color:var(--muted);"></span>
+            <span id="run-state-apply" style="font-size:12px; color:var(--muted);"></span>
             <button class="secondary" onclick="stopTask()" style="padding:4px 10px; font-size:12px;">Stop</button>
           </div>
         </div>
-        <pre class="log" id="live-log"></pre>
+        <pre class="log" id="live-log-apply"></pre>
       </div>
     </section>
 
@@ -204,7 +214,7 @@
       <div class="card">
         <h4 id="g-s3-t" style="margin-top:0;"></h4>
         <p id="g-s3-d" style="color:var(--muted);"></p>
-        <button class="secondary" id="g-s3-btn" onclick="showTab('search', document.getElementById('nav-search'))"></button>
+        <button class="secondary" id="g-s3-btn" onclick="showTab('fetch', document.getElementById('nav-fetch'))"></button>
       </div>
       <div class="card">
         <h4 id="g-s4-t" style="margin-top:0;"></h4>
@@ -223,19 +233,21 @@
 <script>
 const I18N = {
   fr: {
-    navGuide: "1. Intro & Démarrer", navSearch: "2. Chercher & Postuler", navTracker: "3. Candidatures", navPreview: "4. Aperçu CV & LM", navProfile: "5. Profil & GitHub",
+    navGuide: "1. Intro & Démarrer", navFetch: "2. Chercher Offres", navApply: "3. Postuler", navTracker: "4. Candidatures", navPreview: "5. Aperçu CV & LM", navProfile: "6. Profil & GitHub",
     total: "Total", applied: "Envoyés", drafted: "Brouillons", manual: "Portail",
     report: "Justificatif Université (IUT)", refresh: "Actualiser",
     filterPlaceholder: "Filtrer entreprise, poste, mot-clé...", allStatuses: "Tous les statuts",
     thDate: "Date", thSource: "Source", thCompany: "Entreprise", thRole: "Poste", thStatus: "Statut", thDocs: "Documents", thActions: "Actions",
     viewPdf: "Voir PDF", applyBtn: "Postuler",
-    searchHeading: "Lancer une recherche de stages",
+    fetchHeading: "Récupérer de nouvelles offres (sans postuler)",
+    fetchDesc: "Recherche sur LinkedIn / HelloWork, génère les CV & LM en PDF et les enregistre en 'drafted' dans applications.csv.",
+    btnFetch: "Chercher & Générer les PDFs",
+    applyModeTitle: "Mode d'envoi",
     skipExternal: "Ignorer portails externes",
-    mAuto: "Auto-Apply", mApply: "Revue Manuelle", mSearch: "Brouillons PDF seuls",
-    btnLaunch: "Lancer la recherche", btnMail: "Emails spontanés locaux",
-    retryHeading: "Réessayer les offres déjà récupérées",
-    retryDesc: "Relancez les offres en attente sans re-scraper le web.",
-    retryDrafted: "Réessayer Brouillons", retryManual: "Réessayer Portails Manuels",
+    mAuto: "Auto-Apply", mApply: "Revue Manuelle",
+    btnMail: "Générer Emails Spontanés",
+    retryDrafted: "Postuler aux Brouillons", retryManual: "Réessayer Portails Manuels",
+    applyHint: "Les brouillons récents et les emails spontanés sont tous enregistrés dans data/applications.csv.",
     logs: "Logs en direct", idle: "Inactif", running: "En cours...", done: "Terminé", ready: "Prêt.",
     previewEmpty: "Sélectionnez une candidature dans l'onglet Candidatures",
     masterTitle: "Profil Maître & Dépôts GitHub Vérifiés", syncBtn: "Synchroniser GitHub",
@@ -247,31 +259,33 @@ const I18N = {
     gS2T: "Étape 2 — Synchroniser votre GitHub",
     gS2D: "Analyse vos dépôts publics/privés et vos commits personnels pour alimenter config/master_profile.md sans jamais inventer de compétences.",
     gS2Btn: "Synchroniser GitHub",
-    gS3T: "Étape 3 — Chercher des offres & générer CV + LM",
-    gS3D: "Cochez « Candidature simplifiée uniquement » et « Ignorer portails externes » pour éviter les formulaires manuels. Cliquez sur « 1. Chercher & Générer » puis « 2. File Manuelle » (recommandé) ou « 3. Mode Auto ».",
-    gS3Btn: "Aller à Chercher & Postuler",
+    gS3T: "Étape 3 — Chercher des offres",
+    gS3D: "Utilisez '2. Chercher Offres' pour récupérer les offres et générer les CV/LM, puis '3. Postuler' pour envoyer.",
+    gS3Btn: "Aller à Chercher Offres",
     gS4T: "Étape 4 — Vérifier vos candidatures & PDFs",
-    gS4D: "Chaque offre est enregistrée dans data/applications.csv avec son CV et sa Lettre de Motivation dédiés. Mettez à jour le statut (applied / manual_portal / skipped).",
+    gS4D: "Chaque offre est enregistrée dans data/applications.csv avec son CV et sa Lettre de Motivation dédiés.",
     gS4Btn: "Voir mes Candidatures",
     gS5T: "Étape 5 — Exporter le justificatif pour l'IUT",
     gS5D: "Génère un rapport imprimable avec toutes vos candidatures, dates, URLs et documents envoyés pour votre responsable de stage.",
     gS5Btn: "Ouvrir le Justificatif Université",
-    titles: {tracker:"Suivi des Candidatures", search:"Chercher & Postuler", preview:"Aperçu CV & Lettre de Motivation", profile:"Profil & GitHub", guide:"Guide de Démarrage"}
+    titles: {guide:"1. Intro & Démarrer", fetch:"2. Chercher Offres", apply:"3. Postuler", tracker:"4. Candidatures", preview:"5. Aperçu CV & LM", profile:"6. Profil & GitHub"}
   },
   es: {
-    navGuide: "1. Intro y Guía", navSearch: "2. Buscar y Postular", navTracker: "3. Candidaturas", navPreview: "4. Vista CV y Carta", navProfile: "5. Perfil y GitHub",
+    navGuide: "1. Intro y Guía", navFetch: "2. Buscar Ofertas", navApply: "3. Postular", navTracker: "4. Candidaturas", navPreview: "5. Vista CV y Carta", navProfile: "6. Perfil y GitHub",
     total: "Total", applied: "Enviadas", drafted: "Borradores", manual: "Portal",
     report: "Justificante Universidad (IUT)", refresh: "Actualizar",
     filterPlaceholder: "Filtrar empresa, puesto, palabra clave...", allStatuses: "Todos los estados",
     thDate: "Fecha", thSource: "Fuente", thCompany: "Empresa", thRole: "Puesto", thStatus: "Estado", thDocs: "Documentos", thActions: "Acciones",
     viewPdf: "Ver PDF", applyBtn: "Postular",
-    searchHeading: "Buscar prácticas (stages)",
+    fetchHeading: "Buscar nuevas ofertas (solo guardar)",
+    fetchDesc: "Busca en LinkedIn / HelloWork, genera los CV y Cartas en PDF y los guarda como 'drafted' en applications.csv.",
+    btnFetch: "Buscar y Generar PDFs",
+    applyModeTitle: "Modo de envío",
     skipExternal: "Omitir portales externos",
-    mAuto: "Auto-Postular", mApply: "Revisión Manual", mSearch: "Solo generar PDFs",
-    btnLaunch: "Iniciar búsqueda", btnMail: "Emails espontáneos locales",
-    retryHeading: "Reintentar ofertas ya guardadas",
-    retryDesc: "Vuelve a intentar ofertas pendientes sin volver a buscar.",
-    retryDrafted: "Reintentar Borradores", retryManual: "Reintentar Portales Manuales",
+    mAuto: "Auto-Postular", mApply: "Revisión Manual",
+    btnMail: "Generar Emails Espontáneos",
+    retryDrafted: "Postular a Borradores", retryManual: "Reintentar Portales Manuales",
+    applyHint: "Tanto las ofertas guardadas como los emails espontáneos se registran en data/applications.csv.",
     logs: "Registros en vivo", idle: "Inactivo", running: "Ejecutando...", done: "Finalizado", ready: "Listo.",
     previewEmpty: "Selecciona una candidatura en la pestaña Candidaturas",
     masterTitle: "Perfil Maestro y Repositorios GitHub Verificados", syncBtn: "Sincronizar GitHub",
@@ -283,31 +297,33 @@ const I18N = {
     gS2T: "Paso 2 — Sincronizar tu GitHub",
     gS2D: "Indexa tus repositorios públicos/privados y commits propios en config/master_profile.md sin inventar habilidades.",
     gS2Btn: "Sincronizar GitHub",
-    gS3T: "Paso 3 — Buscar ofertas y generar CV + Carta",
-    gS3D: "Deja activado « Solo Solicitud Sencilla » y « Omitir portales externos » para evitar formularios manuales. Usa « 1. Buscar » y luego « 2. Cola Manual » (recomendado) o « 3. Modo Auto ».",
-    gS3Btn: "Ir a Buscar y Postular",
+    gS3T: "Paso 3 — Buscar ofertas",
+    gS3D: "Usa '2. Buscar Ofertas' para descargar ofertas y generar PDFs, y luego '3. Postular' para enviarlas.",
+    gS3Btn: "Ir a Buscar Ofertas",
     gS4T: "Paso 4 — Revisar candidaturas y PDFs",
-    gS4D: "Cada oferta se guarda en data/applications.csv con su CV y Carta exactos. Actualiza el estado (applied / manual_portal / skipped).",
+    gS4D: "Cada oferta se guarda en data/applications.csv con su CV y Carta exactos.",
     gS4Btn: "Ver mis Candidaturas",
     gS5T: "Paso 5 — Exportar justificante para la universidad",
     gS5D: "Genera un informe imprimible con todas tus ofertas, fechas, enlaces y documentos enviados para mostrar en la IUT.",
     gS5Btn: "Abrir Justificante Universidad",
-    titles: {tracker:"Seguimiento de Candidaturas", search:"Buscar y Postular", preview:"Vista CV y Carta de Motivación", profile:"Perfil y GitHub", guide:"Guía de Inicio"}
+    titles: {guide:"1. Intro y Guía", fetch:"2. Buscar Ofertas", apply:"3. Postular", tracker:"4. Candidaturas", preview:"5. Vista CV y Carta", profile:"6. Perfil y GitHub"}
   },
   en: {
-    navGuide: "1. Intro & Guide", navSearch: "2. Search & Apply", navTracker: "3. Applications", navPreview: "4. CV & Letter Preview", navProfile: "5. Profile & GitHub",
+    navGuide: "1. Intro & Guide", navFetch: "2. Fetch Offers", navApply: "3. Apply", navTracker: "4. Applications", navPreview: "5. CV & Letter Preview", navProfile: "6. Profile & GitHub",
     total: "Total", applied: "Applied", drafted: "Drafts", manual: "Portal",
     report: "University Proof Report", refresh: "Refresh",
     filterPlaceholder: "Filter company, role, keyword...", allStatuses: "All statuses",
     thDate: "Date", thSource: "Source", thCompany: "Company", thRole: "Role", thStatus: "Status", thDocs: "Documents", thActions: "Actions",
     viewPdf: "View PDF", applyBtn: "Apply",
-    searchHeading: "Search for internships",
+    fetchHeading: "Fetch new offers (scrape & tailor only)",
+    fetchDesc: "Searches LinkedIn / HelloWork, generates 1-page CV & Letter PDFs, and saves them as 'drafted' in applications.csv.",
+    btnFetch: "Fetch & Generate PDFs",
+    applyModeTitle: "Apply mode",
     skipExternal: "Skip external portals",
-    mAuto: "Auto-Apply", mApply: "Manual Review", mSearch: "Draft PDFs only",
-    btnLaunch: "Launch Search", btnMail: "Local Spontaneous Emails",
-    retryHeading: "Retry already-fetched offers",
-    retryDesc: "Re-run pending offers without scraping again.",
-    retryDrafted: "Retry Drafts", retryManual: "Retry Manual Portals",
+    mAuto: "Auto-Apply", mApply: "Manual Review",
+    btnMail: "Local Spontaneous Emails",
+    retryDrafted: "Apply to Drafts", retryManual: "Retry Manual Portals",
+    applyHint: "All fetched offers and spontaneous emails are logged in data/applications.csv.",
     logs: "Live Logs", idle: "Idle", running: "Running...", done: "Done", ready: "Ready.",
     previewEmpty: "Select an application from the Applications tab",
     masterTitle: "Master Profile & Verified GitHub Repos", syncBtn: "Sync GitHub",
@@ -319,16 +335,16 @@ const I18N = {
     gS2T: "Step 2 — Sync your GitHub repositories",
     gS2D: "Indexes your public/private repos and personal commits into config/master_profile.md without inventing any skills.",
     gS2Btn: "Sync GitHub",
-    gS3T: "Step 3 — Search offers & generate tailored CV + Letter",
-    gS3D: "Keep 'Easy Apply only' and 'Skip external manual portals' checked to avoid tedious external forms. Run '1. Search' then '2. Manual Review Queue' (recommended) or '3. Auto Mode'.",
-    gS3Btn: "Go to Search & Apply",
+    gS3T: "Step 3 — Fetch offers",
+    gS3D: "Use '2. Fetch Offers' to collect offers and build tailored PDFs, then '3. Apply' to submit them.",
+    gS3Btn: "Go to Fetch Offers",
     gS4T: "Step 4 — Review tracked applications & PDFs",
-    gS4D: "Every offer is logged in data/applications.csv alongside its tailored CV and Cover Letter PDFs. Update status anytime (applied / manual_portal / skipped).",
+    gS4D: "Every offer is logged in data/applications.csv alongside its tailored CV and Cover Letter PDFs.",
     gS4Btn: "View Applications",
     gS5T: "Step 5 — Export University Proof Report",
     gS5D: "Generates a printable report of all applications, dates, URLs, and attached PDFs to show your university coordinator.",
     gS5Btn: "Open University Report",
-    titles: {tracker:"Application Tracker", search:"Search & Apply", preview:"CV & Cover Letter Preview", profile:"Profile & GitHub", guide:"Getting Started Guide"}
+    titles: {guide:"1. Intro & Guide", fetch:"2. Fetch Offers", apply:"3. Apply", tracker:"4. Applications", preview:"5. CV & Letter Preview", profile:"6. Profile & GitHub"}
   }
 };
 
@@ -340,7 +356,7 @@ let countsCache = {drafted: 0, manual_portal: 0};
 
 function setRunMode(mode) {
   runMode = mode;
-  ['auto', 'apply', 'search'].forEach(m => {
+  ['auto', 'apply'].forEach(m => {
     document.getElementById('mode-' + m).classList.toggle('active', m === mode);
   });
 }
@@ -351,11 +367,12 @@ function setLang(lang) {
   document.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('lang-' + currentLang).classList.add('active');
   const t = I18N[currentLang];
+  document.getElementById('nav-guide').textContent = t.navGuide;
+  document.getElementById('nav-fetch').textContent = t.navFetch;
+  document.getElementById('nav-apply').textContent = t.navApply;
   document.getElementById('nav-tracker').textContent = t.navTracker;
-  document.getElementById('nav-search').textContent = t.navSearch;
   document.getElementById('nav-preview').textContent = t.navPreview;
   document.getElementById('nav-profile').textContent = t.navProfile;
-  document.getElementById('nav-guide').textContent = t.navGuide;
   document.getElementById('lbl-total').textContent = t.total;
   document.getElementById('lbl-applied').textContent = t.applied;
   document.getElementById('lbl-drafted').textContent = t.drafted;
@@ -371,19 +388,21 @@ function setLang(lang) {
   document.getElementById('th-status').textContent = t.thStatus;
   document.getElementById('th-docs').textContent = t.thDocs;
   document.getElementById('th-actions').textContent = t.thActions;
-  document.getElementById('search-heading').textContent = t.searchHeading;
+  document.getElementById('fetch-heading').textContent = t.fetchHeading;
+  document.getElementById('fetch-desc').textContent = t.fetchDesc;
+  document.getElementById('btn-fetch').textContent = t.btnFetch;
+  document.getElementById('apply-mode-title').textContent = t.applyModeTitle;
   document.getElementById('lbl-skip-ext').textContent = t.skipExternal;
   document.getElementById('lbl-m-auto').textContent = t.mAuto;
   document.getElementById('lbl-m-apply').textContent = t.mApply;
-  document.getElementById('lbl-m-search').textContent = t.mSearch;
-  document.getElementById('btn-launch').textContent = t.btnLaunch;
   document.getElementById('btn-mail').textContent = t.btnMail;
-  document.getElementById('retry-heading').textContent = t.retryHeading;
-  document.getElementById('retry-desc').textContent = t.retryDesc;
   document.getElementById('btn-retry-drafted').textContent = `${t.retryDrafted} (${countsCache.drafted || 0})`;
   document.getElementById('btn-retry-manual').textContent = `${t.retryManual} (${countsCache.manual_portal || 0})`;
-  document.getElementById('lbl-logs').textContent = t.logs;
-  document.getElementById('run-state').textContent = t.idle;
+  document.getElementById('apply-hint').textContent = t.applyHint;
+  document.getElementById('lbl-logs-fetch').textContent = t.logs;
+  document.getElementById('lbl-logs-apply').textContent = t.logs;
+  document.getElementById('run-state-fetch').textContent = t.idle;
+  document.getElementById('run-state-apply').textContent = t.idle;
   if (!document.getElementById('pdf-cv').src) {
     document.getElementById('preview-label').textContent = t.previewEmpty;
   }
@@ -436,6 +455,7 @@ async function loadApps() {
 
 function detectSource(url) {
   const u = (url || '').toLowerCase();
+  if (u.startsWith('spontaneous://')) return 'Spontaneous';
   if (u.includes('linkedin.com')) return 'LinkedIn';
   if (u.includes('hellowork.com')) return 'HelloWork';
   if (u.includes('welcometothejungle.com')) return 'WTTJ';
@@ -498,11 +518,11 @@ async function openInChrome(cvEnc, urlEnc) {
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({action:'open', cv_pdf, url})
   });
-  showTab('search', document.getElementById('nav-search'));
+  showTab('apply', document.getElementById('nav-apply'));
   pollLogs();
 }
 
-async function launchSearch() {
+async function launchFetch() {
   const queries = document.getElementById('q-input').value.split(',').map(s=>s.trim()).filter(Boolean);
   const limit = parseInt(document.getElementById('q-limit').value || '10', 10);
   const sources = [];
@@ -511,11 +531,10 @@ async function launchSearch() {
   if (liOn) sources.push('linkedin');
   if (hwOn) sources.push('hellowork');
   if (!sources.length) sources.push('linkedin');
-  const skip_external = document.getElementById('pill-skip').classList.contains('active');
   await fetch('/api/run', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({action: runMode, limit, queries, sources, easy_apply: liOn, skip_external})
+    body: JSON.stringify({action:'search', limit, queries, sources, easy_apply: liOn})
   });
   pollLogs();
 }
@@ -557,7 +576,7 @@ async function runLogin(stayOnGuide = false) {
 
 async function runSync() {
   await fetch('/api/run', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'sync'})});
-  showTab('search', document.getElementById('nav-search'));
+  showTab('fetch', document.getElementById('nav-fetch'));
   pollLogs();
 }
 
@@ -568,10 +587,15 @@ async function pollLogs() {
   const tick = async () => {
     const res = await fetch('/api/logs');
     const data = await res.json();
-    const el = document.getElementById('live-log');
-    el.textContent = (data.lines || []).join('\n') || t.ready;
-    el.scrollTop = el.scrollHeight;
-    document.getElementById('run-state').textContent = data.running ? t.running : t.done;
+    const txt = (data.lines || []).join('\n') || t.ready;
+    for (const id of ['live-log-fetch', 'live-log-apply']) {
+      const el = document.getElementById(id);
+      if (el) { el.textContent = txt; el.scrollTop = el.scrollHeight; }
+    }
+    for (const id of ['run-state-fetch', 'run-state-apply']) {
+      const st = document.getElementById(id);
+      if (st) st.textContent = data.running ? t.running : t.done;
+    }
     if (!data.running) {
       clearInterval(pollTimer);
       loadApps();
