@@ -250,44 +250,93 @@ def update_tracker_status(url: str, company: str, new_status: str) -> None:
         writer.writerows(rows)
 
 
-def try_auto_submit(page: Page) -> str:
-    for _ in range(4):
-        for sub_sel in [
-            "button:has-text('Envoyer la candidature')",
-            "button:has-text('Envoyer')",
-            "button:has-text('Soumettre')",
-            "button:has-text('Submit application')",
-            "button:has-text('Submit')",
-        ]:
-            try:
-                btn = page.locator(sub_sel).first
-                if btn.is_visible(timeout=1000) and btn.is_enabled():
-                    btn.click()
-                    page.wait_for_timeout(1500)
-                    return "applied"
-            except Exception:
-                continue
+def try_click_next_step(page: Page) -> bool:
+    """Click Next / Suivant / Vérifier / Review in multi-step wizards (e.g. LinkedIn Easy Apply)."""
+    next_selectors = [
+        "button[data-easy-apply-next-button]",
+        "button[aria-label*='étape suivante' i]",
+        "button[aria-label*='next step' i]",
+        "button[aria-label*='Vérifier' i]",
+        "button[aria-label*='Review' i]",
+        "button:has-text('Suivant')",
+        "button:has-text('Vérifier')",
+        "button:has-text('Continuer')",
+        "button:has-text('Next')",
+        "button:has-text('Review')",
+    ]
+    for sel in next_selectors:
+        try:
+            btn = page.locator(sel).first
+            if btn.is_visible(timeout=900) and btn.is_enabled():
+                btn.click()
+                page.wait_for_timeout(1200)
+                return True
+        except Exception:
+            continue
+    return False
 
-        advanced = False
-        for next_sel in [
-            "button:has-text('Suivant')",
-            "button:has-text('Vérifier')",
-            "button:has-text('Continuer')",
-            "button:has-text('Next')",
-            "button:has-text('Review')",
-        ]:
-            try:
-                btn = page.locator(next_sel).first
-                if btn.is_visible(timeout=1000) and btn.is_enabled():
-                    btn.click()
-                    page.wait_for_timeout(1200)
-                    advanced = True
-                    break
-            except Exception:
-                continue
-        if not advanced:
+
+def find_submit_button(page: Page):
+    """Return visible & enabled final submit button if present on current step."""
+    sub_selectors = [
+        "button[aria-label*='Envoyer la candidature' i]",
+        "button[aria-label*='Submit application' i]",
+        "button:has-text('Envoyer la candidature')",
+        "button:has-text('Submit application')",
+        "button:has-text('Envoyer')",
+        "button:has-text('Soumettre')",
+        "button:has-text('Submit')",
+    ]
+    for sel in sub_selectors:
+        try:
+            btn = page.locator(sel).first
+            if btn.is_visible(timeout=800) and btn.is_enabled():
+                return btn
+        except Exception:
+            continue
+    return None
+
+
+def process_application_steps(
+    page: Page,
+    answers: Dict[str, str],
+    cv_pdf: Path,
+    lm_pdf: Path,
+    auto_submit: bool,
+) -> Tuple[List[str], List[str], str]:
+    """
+    Walk through multi-step application modals (e.g. LinkedIn Easy Apply):
+    - Step 1: Fill contact info -> click Suivant/Next
+    - Step 2: Attach CV/LM PDFs -> click Suivant/Vérifier
+    - Final step: Submit if auto_submit=True, else stop right before Envoyer for manual review.
+    """
+    all_filled: List[str] = []
+    all_attached: List[str] = []
+
+    for step in range(1, 7):
+        if page.is_closed():
             break
-    return "manual_portal"
+        print(f"  [*] Processing form step {step}...")
+        filled = fill_matching_fields(page, answers)
+        attached = inject_files(page, cv_pdf, lm_pdf)
+        all_filled.extend(filled)
+        all_attached.extend(attached)
+        if attached:
+            page.wait_for_timeout(800)
+
+        submit_btn = find_submit_button(page)
+        if submit_btn is not None:
+            if auto_submit:
+                submit_btn.click()
+                page.wait_for_timeout(1800)
+                return all_filled, all_attached, "applied"
+            print("  [*] Reached final submit step — paused for your manual review.")
+            return all_filled, all_attached, "ready_for_review"
+
+        if not try_click_next_step(page):
+            break
+
+    return all_filled, all_attached, "manual_portal"
 
 
 def main() -> int:
@@ -384,11 +433,12 @@ def main() -> int:
             return 0
 
         try:
-            filled = fill_matching_fields(active_page, profile["form_answers"])
-            attached = inject_files(active_page, cv_pdf, lm_pdf)
+            filled, attached, wizard_status = process_application_steps(
+                active_page, profile["form_answers"], cv_pdf, lm_pdf, auto_submit=args.auto
+            )
         except Exception as e:
             print(f"[!] Form auto-fill interrupted ({e}); keeping browser open if still active.")
-            filled, attached = [], []
+            filled, attached, wizard_status = [], [], "manual_portal"
 
         is_external = ats not in {"LinkedIn", "HelloWork", "Welcome to the Jungle"}
         if args.skip_external and is_external and (len(filled) == 0 and len(attached) == 0):
@@ -412,9 +462,8 @@ def main() -> int:
         print(f"LM PDF           : {lm_pdf}")
         print("-" * 56)
         if args.auto:
-            result_status = try_auto_submit(active_page)
-            update_tracker_status(url, meta["company"], result_status)
-            print(f"[+] Auto-mode finished with status: '{result_status}'.")
+            update_tracker_status(url, meta["company"], wizard_status)
+            print(f"[+] Auto-mode finished with status: '{wizard_status}'.")
         elif not sys.stdin.isatty():
             print("[*] UI mode: Chrome is open. Review & submit manually, then close the Chrome window when done.")
             try:

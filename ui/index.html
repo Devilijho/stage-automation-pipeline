@@ -90,6 +90,7 @@
           <thead>
             <tr>
               <th id="th-date"></th>
+              <th id="th-source"></th>
               <th id="th-company"></th>
               <th id="th-role"></th>
               <th id="th-status"></th>
@@ -201,7 +202,7 @@ const I18N = {
     total: "Total", applied: "Envoyés", drafted: "Brouillons", manual: "Portail",
     report: "Justificatif Université (IUT)", refresh: "Actualiser",
     filterPlaceholder: "Filtrer entreprise, poste, mot-clé...", allStatuses: "Tous les statuts",
-    thDate: "Date", thCompany: "Entreprise", thRole: "Poste", thStatus: "Statut", thDocs: "Documents", thActions: "Actions",
+    thDate: "Date", thSource: "Source", thCompany: "Entreprise", thRole: "Poste", thStatus: "Statut", thDocs: "Documents", thActions: "Actions",
     viewPdf: "Voir PDF", applyBtn: "Postuler",
     searchHeading: "Lancer une recherche de stages",
     easyApply: "Candidature simplifiée uniquement (LinkedIn)", skipExternal: "Ignorer portails externes manuels",
@@ -233,7 +234,7 @@ const I18N = {
     total: "Total", applied: "Enviadas", drafted: "Borradores", manual: "Portal",
     report: "Justificante Universidad (IUT)", refresh: "Actualizar",
     filterPlaceholder: "Filtrar empresa, puesto, palabra clave...", allStatuses: "Todos los estados",
-    thDate: "Fecha", thCompany: "Empresa", thRole: "Puesto", thStatus: "Estado", thDocs: "Documentos", thActions: "Acciones",
+    thDate: "Fecha", thSource: "Fuente", thCompany: "Empresa", thRole: "Puesto", thStatus: "Estado", thDocs: "Documentos", thActions: "Acciones",
     viewPdf: "Ver PDF", applyBtn: "Postular",
     searchHeading: "Buscar prácticas (stages)",
     easyApply: "Solo Solicitud Sencilla (LinkedIn)", skipExternal: "Omitir portales externos manuales",
@@ -265,7 +266,7 @@ const I18N = {
     total: "Total", applied: "Applied", drafted: "Drafts", manual: "Portal",
     report: "University Proof Report", refresh: "Refresh",
     filterPlaceholder: "Filter company, role, keyword...", allStatuses: "All statuses",
-    thDate: "Date", thCompany: "Company", thRole: "Role", thStatus: "Status", thDocs: "Documents", thActions: "Actions",
+    thDate: "Date", thSource: "Source", thCompany: "Company", thRole: "Role", thStatus: "Status", thDocs: "Documents", thActions: "Actions",
     viewPdf: "View PDF", applyBtn: "Apply",
     searchHeading: "Search for internships",
     easyApply: "Easy Apply only (LinkedIn)", skipExternal: "Skip external manual portals",
@@ -318,6 +319,7 @@ function setLang(lang) {
   document.getElementById('filter-q').placeholder = t.filterPlaceholder;
   document.getElementById('opt-all').textContent = t.allStatuses;
   document.getElementById('th-date').textContent = t.thDate;
+  document.getElementById('th-source').textContent = t.thSource;
   document.getElementById('th-company').textContent = t.thCompany;
   document.getElementById('th-role').textContent = t.thRole;
   document.getElementById('th-status').textContent = t.thStatus;
@@ -377,6 +379,14 @@ async function loadApps() {
   renderTable();
 }
 
+function detectSource(url) {
+  const u = (url || '').toLowerCase();
+  if (u.includes('linkedin.com')) return 'LinkedIn';
+  if (u.includes('hellowork.com')) return 'HelloWork';
+  if (u.includes('welcometothejungle.com')) return 'WTTJ';
+  return 'Other';
+}
+
 function renderTable() {
   const t = I18N[currentLang];
   const q = document.getElementById('filter-q').value.toLowerCase();
@@ -385,11 +395,13 @@ function renderTable() {
   tbody.innerHTML = '';
   for (const r of allRows) {
     if (st && r.Status !== st) continue;
-    const blob = `${r.Company} ${r.Role} ${r.Matched_Keywords}`.toLowerCase();
+    const src = detectSource(r.URL);
+    const blob = `${src} ${r.Company} ${r.Role} ${r.Matched_Keywords}`.toLowerCase();
     if (q && !blob.includes(q)) continue;
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td style="color:var(--muted);white-space:nowrap;">${r.Date || ''}</td>
+      <td><span style="font-size:11px;padding:2px 7px;border-radius:999px;border:1px solid var(--border);color:var(--muted);">${src}</span></td>
       <td><strong>${r.Company || ''}</strong></td>
       <td><a href="${r.URL}" target="_blank" style="color:var(--accent);text-decoration:none;">${r.Role || ''}</a></td>
       <td>

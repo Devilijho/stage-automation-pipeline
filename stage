@@ -65,7 +65,9 @@ p = Path('$ROOT_DIR/data/applications.csv')
 rows = list(csv.DictReader(p.open(encoding='utf-8')))
 print(f'Total tracked offers: {len(rows)}')
 for i, r in enumerate(rows, 1):
-    print(f\"{i:2d}. [{r['Status']:13s}] {r['Company']} — {r['Role']}\")
+    u = (r.get('URL') or '').lower()
+    src = 'LinkedIn' if 'linkedin.com' in u else ('HelloWork' if 'hellowork.com' in u else 'Other')
+    print(f\"{i:2d}. [{r['Status']:13s}] [{src:9s}] {r['Company']} — {r['Role']}\")
     print(f\"    {r['URL']}\")
 "
     ;;
