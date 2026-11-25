@@ -38,6 +38,20 @@
   th, td { border-bottom: 1px solid var(--border); padding: 10px 8px; text-align: left; }
   th { color: var(--muted); font-weight: 600; font-size: 12px; }
   pre.log { background: #010409; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 12px; height: 220px; overflow-y: auto; color: #c9d1d9; margin: 0; white-space: pre-wrap; }
+  .clean-log { background: #010409; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+  .log-summary { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .log-chip { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); background: #0d1117; color: var(--muted); }
+  .log-chip.green { border-color: rgba(63,185,80,.45); color: var(--green); }
+  .log-chip.amber { border-color: rgba(210,153,34,.45); color: var(--amber); }
+  .log-chip.blue { border-color: rgba(88,166,255,.45); color: var(--accent); }
+  .log-chip.purple { border-color: rgba(163,113,247,.45); color: #bc8cff; }
+  .log-row { display: flex; align-items: flex-start; gap: 8px; padding: 5px 8px; border-radius: 6px; background: rgba(255,255,255,.02); line-height: 1.35; }
+  .log-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; flex-shrink: 0; margin-top: 1px; }
+  .log-badge.ok { background: rgba(63,185,80,.18); color: var(--green); }
+  .log-badge.warn { background: rgba(210,153,34,.18); color: var(--amber); }
+  .log-badge.info { background: rgba(88,166,255,.18); color: var(--accent); }
+  .log-badge.ai { background: rgba(163,113,247,.18); color: #bc8cff; }
+  .log-badge.err { background: rgba(248,81,73,.18); color: var(--red); }
   .pdf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; height: 72vh; }
   iframe.pdf { width: 100%; height: 100%; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
   .dirty-row { background: rgba(210,153,34,.08); }
@@ -86,6 +100,8 @@
           <option value="drafted">drafted</option>
           <option value="applied">applied</option>
           <option value="manual_portal">manual_portal</option>
+          <option value="needs_login">needs_login</option>
+          <option value="expired">expired</option>
           <option value="skipped">skipped</option>
         </select>
         <button class="secondary" id="btn-refresh" onclick="loadApps()"></button>
@@ -116,16 +132,24 @@
         <p id="fetch-desc" style="font-size:12px; color:var(--muted); margin-top:0; margin-bottom:14px;"></p>
         <div class="row" style="margin-bottom:12px;">
           <input id="q-input" value="" style="flex:1;">
-          <select id="q-limit" style="width:110px;">
+          <select id="q-limit" style="width:120px;">
             <option value="5">5 offers</option>
             <option value="10" selected>10 offers</option>
             <option value="20">20 offers</option>
+            <option value="30">30 offers</option>
+            <option value="50">50 offers</option>
+            <option value="100">100 offers</option>
           </select>
         </div>
         <div class="row" style="margin-bottom:14px;">
-          <div class="pill-group">
+          <div class="pill-group" style="flex-wrap:wrap;">
             <button class="pill active" id="pill-li" onclick="this.classList.toggle('active')">LinkedIn (Easy Apply)</button>
             <button class="pill" id="pill-hw" onclick="this.classList.toggle('active')">HelloWork</button>
+            <button class="pill" id="pill-wttj" onclick="this.classList.toggle('active')">Welcome to the Jungle</button>
+            <button class="pill" id="pill-jt" onclick="this.classList.toggle('active')">JobTeaser</button>
+            <button class="pill" id="pill-indeed" onclick="this.classList.toggle('active')">Indeed</button>
+            <button class="pill" id="pill-apec" onclick="this.classList.toggle('active')">APEC</button>
+            <button class="pill" id="pill-mj" onclick="this.classList.toggle('active')">Meteojob</button>
           </div>
         </div>
         <button class="primary" id="btn-fetch" onclick="launchFetch()"></button>
@@ -135,11 +159,17 @@
           <strong id="lbl-logs-fetch"></strong>
           <div class="row">
             <span id="run-state-fetch" style="font-size:12px; color:var(--muted);"></span>
+            <div class="lang-bar">
+              <button class="lang-btn active" id="lv-clean-fetch" onclick="setLogView('clean')">Clean</button>
+              <button class="lang-btn" id="lv-raw-fetch" onclick="setLogView('raw')">Raw</button>
+            </div>
             <button class="secondary" onclick="copyLogs(this)" style="padding:4px 10px; font-size:12px;">Copy</button>
             <button class="secondary" onclick="stopTask()" style="padding:4px 10px; font-size:12px;">Stop</button>
           </div>
         </div>
-        <pre class="log" id="live-log-fetch"></pre>
+        <div class="log-summary" id="log-summary-fetch"></div>
+        <div class="clean-log" id="clean-log-fetch"></div>
+        <pre class="log hidden" id="live-log-fetch"></pre>
       </div>
     </section>
 
@@ -167,11 +197,17 @@
           <strong id="lbl-logs-apply"></strong>
           <div class="row">
             <span id="run-state-apply" style="font-size:12px; color:var(--muted);"></span>
+            <div class="lang-bar">
+              <button class="lang-btn active" id="lv-clean-apply" onclick="setLogView('clean')">Clean</button>
+              <button class="lang-btn" id="lv-raw-apply" onclick="setLogView('raw')">Raw</button>
+            </div>
             <button class="secondary" onclick="copyLogs(this)" style="padding:4px 10px; font-size:12px;">Copy</button>
             <button class="secondary" onclick="stopTask()" style="padding:4px 10px; font-size:12px;">Stop</button>
           </div>
         </div>
-        <pre class="log" id="live-log-apply"></pre>
+        <div class="log-summary" id="log-summary-apply"></div>
+        <div class="clean-log" id="clean-log-apply"></div>
+        <pre class="log hidden" id="live-log-apply"></pre>
       </div>
     </section>
 
@@ -199,39 +235,6 @@
 
     <!-- Q&A & RULES TAB -->
     <section id="tab-questions" class="hidden">
-      <div class="card">
-        <div class="row" style="justify-content:space-between; margin-bottom:10px;">
-          <div>
-            <strong>Unanswered &amp; Custom Questions</strong>
-            <span style="font-size:12px; color:var(--muted); margin-left:8px;">(data/unanswered_questions.json)</span>
-          </div>
-          <div class="row">
-            <select id="qa-filter" onchange="renderUnanswered()">
-              <option value="all">All</option>
-              <option value="missing">Missing only</option>
-              <option value="answered">Answered only</option>
-            </select>
-            <button class="secondary" onclick="loadQuestions()">Refresh</button>
-            <button class="primary" onclick="saveUnansweredQuestions()">Save Answers</button>
-          </div>
-        </div>
-        <div id="qa-save-status" style="font-size:12px; color:var(--accent); margin-bottom:8px;"></div>
-        <div style="overflow-x:auto;">
-          <table>
-            <thead>
-              <tr>
-                <th>Type</th>
-                <th>Question</th>
-                <th>Options</th>
-                <th>Company</th>
-                <th style="min-width:220px;">Answer</th>
-              </tr>
-            </thead>
-            <tbody id="qa-unanswered-tbody"></tbody>
-          </table>
-        </div>
-      </div>
-
       <div class="card">
         <div class="row" style="justify-content:space-between; margin-bottom:10px;">
           <div>
@@ -320,7 +323,7 @@ const I18N = {
     thDate: "Date", thSource: "Source", thCompany: "Entreprise", thRole: "Poste", thStatus: "Statut", thDocs: "Documents", thActions: "Actions",
     viewPdf: "Voir PDF", applyBtn: "Postuler",
     fetchHeading: "Récupérer de nouvelles offres (sans postuler)",
-    fetchDesc: "Recherche sur LinkedIn / HelloWork, génère les CV & LM en PDF et les enregistre en 'drafted' dans applications.csv.",
+    fetchDesc: "Recherche sur LinkedIn, HelloWork, WTTJ, JobTeaser, Indeed, APEC & Meteojob (avec vos cookies Chrome), génère les CV & LM en PDF et les enregistre en 'drafted'.",
     btnFetch: "Chercher & Générer les PDFs",
     applyModeTitle: "Mode d'envoi",
     skipExternal: "Ignorer portails externes",
@@ -333,8 +336,8 @@ const I18N = {
     masterTitle: "Profil Maître & Dépôts GitHub Vérifiés", syncBtn: "Synchroniser GitHub",
     gTitle: "Démarrer avec StageBot (Étape par étape)",
     gIntro: "Suivez ces 5 étapes pour configurer votre session, générer des CV/LM ciblés et postuler efficacement.",
-    gS1T: "Étape 1 — Connecter LinkedIn & HelloWork (à faire 1 fois)",
-    gS1D: "Ouvre le navigateur Chrome persistant pour vous connecter à LinkedIn et HelloWork. Fermez la fenêtre une fois connecté : votre session restera enregistrée.",
+    gS1T: "Étape 1 — Connecter vos comptes (à faire 1 fois)",
+    gS1D: "Ouvre Chrome (.chrome_profile/) sur LinkedIn, HelloWork, WTTJ, JobTeaser, Indeed, APEC et Meteojob. Connectez-vous puis fermez la fenêtre : vos cookies seront réutilisés automatiquement.",
     gS1Btn: "Ouvrir Login Chrome", gLoginMsg: "Chrome ouvert — connectez-vous puis fermez la fenêtre Chrome.",
     gS2T: "Étape 2 — Synchroniser votre GitHub",
     gS2D: "Analyse vos dépôts publics/privés et vos commits personnels pour alimenter config/master_profile.md sans jamais inventer de compétences.",
@@ -358,7 +361,7 @@ const I18N = {
     thDate: "Fecha", thSource: "Fuente", thCompany: "Empresa", thRole: "Puesto", thStatus: "Estado", thDocs: "Documentos", thActions: "Acciones",
     viewPdf: "Ver PDF", applyBtn: "Postular",
     fetchHeading: "Buscar nuevas ofertas (solo guardar)",
-    fetchDesc: "Busca en LinkedIn / HelloWork, genera los CV y Cartas en PDF y los guarda como 'drafted' en applications.csv.",
+    fetchDesc: "Busca en LinkedIn, HelloWork, WTTJ, JobTeaser, Indeed, APEC y Meteojob (usando tus cookies de Chrome), genera los CV/Cartas en PDF y los guarda como 'drafted'.",
     btnFetch: "Buscar y Generar PDFs",
     applyModeTitle: "Modo de envío",
     skipExternal: "Omitir portales externos",
@@ -371,8 +374,8 @@ const I18N = {
     masterTitle: "Perfil Maestro y Repositorios GitHub Verificados", syncBtn: "Sincronizar GitHub",
     gTitle: "Cómo empezar con StageBot (Paso a paso)",
     gIntro: "Sigue estos 5 pasos para guardar tu sesión, generar CVs/Cartas adaptados y postular rápido.",
-    gS1T: "Paso 1 — Iniciar sesión en LinkedIn y HelloWork (1 sola vez)",
-    gS1D: "Abre el navegador Chrome persistente para iniciar sesión en LinkedIn y HelloWork. Cierra esa ventana al terminar: tu sesión quedará guardada.",
+    gS1T: "Paso 1 — Iniciar sesión en los portales (1 sola vez)",
+    gS1D: "Abre Chrome (.chrome_profile/) en LinkedIn, HelloWork, WTTJ, JobTeaser, Indeed, APEC y Meteojob. Inicia sesión y cierra la ventana: tus cookies se reutilizarán automáticamente.",
     gS1Btn: "Abrir Login Chrome", gLoginMsg: "Chrome abierto — inicia sesión y cierra la ventana al terminar.",
     gS2T: "Paso 2 — Sincronizar tu GitHub",
     gS2D: "Indexa tus repositorios públicos/privados y commits propios en config/master_profile.md sin inventar habilidades.",
@@ -396,7 +399,7 @@ const I18N = {
     thDate: "Date", thSource: "Source", thCompany: "Company", thRole: "Role", thStatus: "Status", thDocs: "Documents", thActions: "Actions",
     viewPdf: "View PDF", applyBtn: "Apply",
     fetchHeading: "Fetch new offers (scrape & tailor only)",
-    fetchDesc: "Searches LinkedIn / HelloWork, generates 1-page CV & Letter PDFs, and saves them as 'drafted' in applications.csv.",
+    fetchDesc: "Searches LinkedIn, HelloWork, WTTJ, JobTeaser, Indeed, APEC & Meteojob (using your saved Chrome cookies), generates 1-page CV & Letter PDFs, and saves them as 'drafted'.",
     btnFetch: "Fetch & Generate PDFs",
     applyModeTitle: "Apply mode",
     skipExternal: "Skip external portals",
@@ -409,8 +412,8 @@ const I18N = {
     masterTitle: "Master Profile & Verified GitHub Repos", syncBtn: "Sync GitHub",
     gTitle: "Getting Started with StageBot (Step-by-Step)",
     gIntro: "Follow these 5 steps to save your login session, generate tailored CVs/Letters, and apply cleanly.",
-    gS1T: "Step 1 — Log into LinkedIn & HelloWork (one-time setup)",
-    gS1D: "Opens the persistent Chrome profile to LinkedIn and HelloWork. Log in and close that Chrome window—your session stays saved for future runs.",
+    gS1T: "Step 1 — Log into job boards (one-time setup)",
+    gS1D: "Opens persistent Chrome (.chrome_profile/) to LinkedIn, HelloWork, WTTJ, JobTeaser, Indeed, APEC, and Meteojob. Sign in and close the window—your cookies are saved and reused automatically.",
     gS1Btn: "Open Login Chrome", gLoginMsg: "Chrome opened — sign in, then close the Chrome window when done.",
     gS2T: "Step 2 — Sync your GitHub repositories",
     gS2D: "Indexes your public/private repos and personal commits into config/master_profile.md without inventing any skills.",
@@ -541,6 +544,10 @@ function detectSource(url) {
   if (u.includes('linkedin.com')) return 'LinkedIn';
   if (u.includes('hellowork.com')) return 'HelloWork';
   if (u.includes('welcometothejungle.com')) return 'WTTJ';
+  if (u.includes('jobteaser.com')) return 'JobTeaser';
+  if (u.includes('indeed.com')) return 'Indeed';
+  if (u.includes('apec.fr')) return 'APEC';
+  if (u.includes('meteojob.com')) return 'Meteojob';
   return 'Other';
 }
 
@@ -563,7 +570,7 @@ function renderTable() {
       <td><a href="${r.URL}" target="_blank" style="color:var(--accent);text-decoration:none;">${r.Role || ''}</a></td>
       <td>
         <select onchange="changeStatus('${encodeURIComponent(r.URL)}', this.value)">
-          ${['drafted','applied','manual_portal','skipped'].map(s => `<option value="${s}" ${r.Status===s?'selected':''}>${s}</option>`).join('')}
+          ${['drafted','applied','manual_portal','needs_login','expired','skipped'].map(s => `<option value="${s}" ${r.Status===s?'selected':''}>${s}</option>`).join('')}
         </select>
       </td>
       <td><button class="secondary" onclick="previewDocs('${encodeURIComponent(r.Company || '')}','${encodeURIComponent(r.CV_PDF || '')}','${encodeURIComponent(r.LM_PDF || '')}')">${t.viewPdf}</button></td>
@@ -610,8 +617,18 @@ async function launchFetch() {
   const sources = [];
   const liOn = document.getElementById('pill-li').classList.contains('active');
   const hwOn = document.getElementById('pill-hw').classList.contains('active');
+  const wttjOn = document.getElementById('pill-wttj').classList.contains('active');
+  const jtOn = document.getElementById('pill-jt').classList.contains('active');
+  const indeedOn = document.getElementById('pill-indeed').classList.contains('active');
+  const apecOn = document.getElementById('pill-apec').classList.contains('active');
+  const mjOn = document.getElementById('pill-mj').classList.contains('active');
   if (liOn) sources.push('linkedin');
   if (hwOn) sources.push('hellowork');
+  if (wttjOn) sources.push('wttj');
+  if (jtOn) sources.push('jobteaser');
+  if (indeedOn) sources.push('indeed');
+  if (apecOn) sources.push('apec');
+  if (mjOn) sources.push('meteojob');
   if (!sources.length) sources.push('linkedin');
   await fetch('/api/run', {
     method:'POST',
@@ -669,6 +686,75 @@ async function runSync() {
   pollLogs();
 }
 
+let logViewMode = localStorage.getItem('stagebot_log_view') || 'clean';
+function setLogView(mode) {
+  logViewMode = mode === 'raw' ? 'raw' : 'clean';
+  localStorage.setItem('stagebot_log_view', logViewMode);
+  for (const sfx of ['fetch', 'apply']) {
+    document.getElementById('lv-clean-' + sfx)?.classList.toggle('active', logViewMode === 'clean');
+    document.getElementById('lv-raw-' + sfx)?.classList.toggle('active', logViewMode === 'raw');
+    document.getElementById('clean-log-' + sfx)?.classList.toggle('hidden', logViewMode !== 'clean');
+    document.getElementById('log-summary-' + sfx)?.classList.toggle('hidden', logViewMode !== 'clean');
+    document.getElementById('live-log-' + sfx)?.classList.toggle('hidden', logViewMode !== 'raw');
+  }
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderCleanLogs(lines) {
+  const counts = { applied: 0, manual: 0, tailored: 0, llm: 0, searched: 0 };
+  const events = [];
+  for (const raw of lines) {
+    const line = (raw || '').trim();
+    if (!line || line.startsWith('===') || line.startsWith('---') || line.startsWith('Call log:') || line.startsWith('- waiting for') || line.startsWith('- attempting click') || line.startsWith('× ') || line.startsWith('- element is') || line.startsWith('- scrolling') || line.startsWith('- done scrolling') || line.startsWith('- <div') || line.startsWith('- retrying')) continue;
+
+    let m;
+    if ((m = line.match(/^\[\+\]\s+\[([^\]]+)\]\s+(?:Confirmed|Submitted)\s+->\s+'applied'/))) {
+      counts.applied++;
+      events.push({ cls: 'ok', badge: 'Applied', text: m[1] });
+    } else if ((m = line.match(/^\[!\]\s+Bailout\s+\[([^\]]+)\]:\s*(.+)$/))) {
+      counts.manual++;
+      const reason = m[2].split('Locator.click:')[0].split('(')[0].trim();
+      events.push({ cls: 'warn', badge: 'Manual', text: `<strong>${escapeHtml(m[1])}</strong> — ${escapeHtml(reason || m[2].slice(0, 90))}` });
+    } else if ((m = line.match(/^\[LLM:([^\]]+)\]\s+(.+)$/))) {
+      counts.llm++;
+      events.push({ cls: 'ai', badge: 'AI', text: escapeHtml(m[2]) });
+    } else if ((m = line.match(/^\[\*\]\s+\[(\d+\/\d+)\]\s+Tailoring\s+\(([^)]+)\):\s*(.+)$/))) {
+      counts.tailored++;
+      events.push({ cls: 'ok', badge: 'Tailored', text: `[${m[1]}] ${escapeHtml(m[2])}: ${escapeHtml(m[3])}` });
+    } else if ((m = line.match(/^\[\*\]\s+Searching\s+([^:]+):\s*(.+)$/))) {
+      counts.searched++;
+      events.push({ cls: 'info', badge: 'Search', text: `${escapeHtml(m[1])}: ${escapeHtml(m[2].replace(/\s*\.\.\.$/, ''))}` });
+    } else if ((m = line.match(/^\[\*\]\s+\[([^\]]+)\]\s+Opening\s+(https?:\/\/\S+)/))) {
+      events.push({ cls: 'info', badge: 'Open', text: `<strong>${escapeHtml(m[1])}</strong>` });
+    } else if (line.startsWith('[+] Done!') || line.includes('Starting:') || line.includes('Finished (exit code') || line.includes('Selected top ') || line.includes('Found ') || line.includes('Retrying ')) {
+      events.push({ cls: 'info', badge: 'Info', text: escapeHtml(line.replace(/^\[\*\]\s*|^\[\+\]\s*/, '')) });
+    } else if (line.startsWith('[!]')) {
+      events.push({ cls: 'err', badge: 'Warn', text: escapeHtml(line.replace(/^\[!\]\s*/, '').slice(0, 140)) });
+    }
+  }
+
+  const chips = [];
+  if (counts.applied) chips.push(`<span class="log-chip green">Applied: ${counts.applied}</span>`);
+  if (counts.manual) chips.push(`<span class="log-chip amber">Manual: ${counts.manual}</span>`);
+  if (counts.tailored) chips.push(`<span class="log-chip green">Tailored: ${counts.tailored}</span>`);
+  if (counts.llm) chips.push(`<span class="log-chip purple">AI Answered: ${counts.llm}</span>`);
+  if (counts.searched) chips.push(`<span class="log-chip blue">Queries: ${counts.searched}</span>`);
+
+  const html = events.length
+    ? events.map(e => `<div class="log-row"><span class="log-badge ${e.cls}">${e.badge}</span><span>${e.text}</span></div>`).join('')
+    : `<div style="color:var(--muted);">${escapeHtml(I18N[currentLang].ready)}</div>`;
+
+  for (const sfx of ['fetch', 'apply']) {
+    const sumEl = document.getElementById('log-summary-' + sfx);
+    const cleanEl = document.getElementById('clean-log-' + sfx);
+    if (sumEl) sumEl.innerHTML = chips.join('');
+    if (cleanEl) { cleanEl.innerHTML = html; cleanEl.scrollTop = cleanEl.scrollHeight; }
+  }
+}
+
 let pollTimer = null;
 async function pollLogs() {
   if (pollTimer) clearInterval(pollTimer);
@@ -676,11 +762,13 @@ async function pollLogs() {
   const tick = async () => {
     const res = await fetch('/api/logs');
     const data = await res.json();
-    const txt = (data.lines || []).join('\n') || t.ready;
+    const lines = data.lines || [];
+    const txt = lines.join('\n') || t.ready;
     for (const id of ['live-log-fetch', 'live-log-apply']) {
       const el = document.getElementById(id);
       if (el) { el.textContent = txt; el.scrollTop = el.scrollHeight; }
     }
+    renderCleanLogs(lines);
     for (const id of ['run-state-fetch', 'run-state-apply']) {
       const st = document.getElementById(id);
       if (st) st.textContent = data.running ? t.running : t.done;
@@ -719,16 +807,16 @@ async function loadQuestions() {
   try {
     const res = await fetch('/api/questions');
     if (!res.ok) {
-      statusEl.textContent = `Error ${res.status}: Restart StageBot UI server so /api/questions is active.`;
+      if (statusEl) statusEl.textContent = `Error ${res.status}: Restart StageBot UI server so /api/questions is active.`;
       return;
     }
     qaData = await res.json();
     dirtyUnanswered.clear();
-    statusEl.textContent = '';
+    if (statusEl) statusEl.textContent = '';
     document.getElementById('fa-save-status').textContent = '';
     document.getElementById('cr-save-status').textContent = '';
   } catch (e) {
-    statusEl.textContent = 'Failed to reach /api/questions — restart StageBot UI server.';
+    if (statusEl) statusEl.textContent = 'Failed to reach /api/questions — restart StageBot UI server.';
     return;
   }
   renderUnanswered();
@@ -778,8 +866,10 @@ async function loadQuestions() {
 }
 
 function renderUnanswered() {
-  const filter = document.getElementById('qa-filter').value;
+  const filterEl = document.getElementById('qa-filter');
   const tbody = document.getElementById('qa-unanswered-tbody');
+  if (!filterEl || !tbody) return;
+  const filter = filterEl.value;
   tbody.innerHTML = '';
   const items = qaData.unanswered || [];
   let shown = 0;
@@ -985,6 +1075,7 @@ async function saveCustomRules() {
 }
 
 setLang(currentLang);
+setLogView(logViewMode);
 loadApps();
 loadProfile();
 loadQuestions();

@@ -11,6 +11,7 @@ to `applications.csv` while preventing duplicates.
 
 import argparse
 import csv
+import fcntl
 import json
 import re
 import shutil
@@ -52,15 +53,15 @@ KNOWN_KEYWORDS: Dict[str, List[str]] = {
     "JavaScript": ["javascript", "js", "ecmascript"],
     "Python": ["python"],
     "Java": ["java"],
-    "SQL": ["sql", "postgresql", "postgres", "mysql", "sqlite", "oracle"],
+    "SQL": ["sql", "postgresql", "postgres", "mysql", "sqlite", "oracle", "mariadb", "supabase", "plpgsql"],
     "HTML5/CSS3": ["html", "css", "html5", "css3", "tailwind"],
-    "React": ["react", "reactjs", "next.js", "nextjs"],
+    "React": ["react", "reactjs", "next.js", "nextjs", "vite"],
     "Node.js": ["node.js", "nodejs", "express", "nestjs"],
     "Three.js": ["three.js", "threejs", "webgl"],
-    "Docker": ["docker", "conteneur", "container", "dockerfile", "docker-compose"],
+    "Docker": ["docker", "conteneur", "container", "dockerfile", "docker-compose", "nginx"],
     "Git": ["git", "github", "gitlab", "ci/cd"],
     "Linux": ["linux", "unix", "bash", "shell", "debian", "ubuntu"],
-    "Cybersécurité": ["cybersécurité", "cybersecurity", "sécurité", "security", "pentest", "ctf", "owasp", "audit"],
+    "Cybersécurité": ["cybersécurité", "cybersecurity", "sécurité", "security", "pentest", "ctf", "owasp", "audit", "soc"],
     "Réseaux": ["réseau", "réseaux", "network", "tcp", "ip", "http", "https", "dns", "ssh", "vpn", "firewall", "pare-feu"],
     "Cryptographie": ["cryptographie", "cryptography", "chiffrement", "tls", "ssl"],
     "Reverse Engineering": ["reverse engineering", "ingénierie inverse", "assembleur", "assembly", "x86", "gdb", "binaire", "binary"],
@@ -69,9 +70,71 @@ KNOWN_KEYWORDS: Dict[str, List[str]] = {
     "Backend": ["backend", "back-end", "serveur", "server", "microservices"],
     "Frontend": ["frontend", "front-end", "ui", "ux"],
     "Full-Stack": ["full-stack", "fullstack", "full stack"],
-    "DevOps": ["devops", "déploiement", "sysadmin", "administration système"],
+    "DevOps": ["devops", "déploiement", "sysadmin", "administration système", "infrastructure"],
     "Agile": ["agile", "scrum", "kanban", "peer-learning"],
 }
+
+FRENCH_MONTHS = [
+    "janvier", "février", "mars", "avril", "mai", "juin",
+    "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+]
+
+KNOWN_CITIES = [
+    "Paris", "La Défense", "Saclay", "Orsay", "Bures-sur-Yvette", "Palaiseau",
+    "Massy", "Vélizy-Villacoublay", "Vélizy", "Nanterre", "Boulogne-Billancourt",
+    "Issy-les-Moulineaux", "Courbevoie", "Neuilly-sur-Seine", "Levallois-Perret",
+    "Montrouge", "Antony", "Les Ulis", "Évry", "Saint-Denis", "Versailles",
+    "Lyon", "Toulouse", "Lille", "Nantes", "Bordeaux", "Marseille",
+]
+
+
+def format_french_date(dt: Optional[datetime] = None) -> str:
+    now = dt or datetime.now()
+    return f"{now.day} {FRENCH_MONTHS[now.month - 1]} {now.year}"
+
+
+def clean_role_for_prose(role: str) -> str:
+    """Clean role title for natural insertion in French prose (strip H/F & leading 'Stage - ')."""
+    r = re.sub(r"\s*\(\s*(?:h\s*/\s*f|f\s*/\s*h|h\s*/\s*f\s*/\s*x|x\s*/\s*f\s*/\s*m|m\s*/\s*f)\s*\)", "", role, flags=re.I)
+    r = re.sub(r"\b(?:h\s*/\s*f|f\s*/\s*h|h\s*/\s*f\s*/\s*x|m\s*/\s*f)\b", "", r, flags=re.I)
+    r = re.sub(r"^\s*(?:stage|stagiaire)\s*(?:[-–—:|/]\s*|\bde\s+)", "", r, flags=re.I)
+    r = re.sub(r"\s+", " ", r).strip(" -–—:/|")
+    return r or "Développeur Informatique"
+
+
+def infer_offer_city(job_text: str) -> str:
+    sample = job_text[:2500]
+    for city in KNOWN_CITIES:
+        if re.search(rf"\b{re.escape(city)}\b", sample, re.I):
+            return f"{city}, France"
+    return "Île-de-France, France"
+
+
+def detect_role_archetype(role: str, job_text: str, matched_keywords: List[str]) -> str:
+    """Classify the offer into cyber / infra / web / systems using title + matched keywords."""
+    title_l = role.lower()
+    kw_set = {k.lower() for k in matched_keywords}
+    blob = f"{title_l} {job_text[:1500].lower()}"
+
+    if any(t in title_l for t in ("cyber", "sécurit", "securit", "soc", "pentest", "audit", "crypto", "reverse")):
+        return "cyber"
+    if any(t in title_l for t in ("réseau", "reseau", "système", "systeme", "devops", "infra", "sysadmin", "cloud", "sre")):
+        return "infra"
+    if any(t in title_l for t in ("full", "front", "web", "react", "typescript", "javascript", "node", "back-end", "backend", "saas", "mobile")):
+        return "web"
+
+    cyber_score = sum(1 for k in ("cybersécurité", "cryptographie", "reverse engineering", "valgrind") if k in kw_set)
+    infra_score = sum(1 for k in ("réseaux", "linux", "docker", "devops") if k in kw_set)
+    web_score = sum(1 for k in ("typescript", "javascript", "react", "node.js", "html5/css3", "full-stack", "frontend", "api rest", "sql") if k in kw_set)
+    sys_score = sum(1 for k in ("c", "c++", "linux", "valgrind") if k in kw_set)
+
+    if cyber_score >= 2 or "cybersécurité" in blob:
+        return "cyber"
+    if infra_score >= 3 and infra_score >= web_score:
+        return "infra"
+    if web_score >= 2 and web_score > sys_score:
+        return "web"
+    return "systems"
 
 
 def latex_escape(text: str) -> str:
@@ -167,90 +230,128 @@ def parse_verified_master_profile() -> Tuple[set, List[Dict[str, Any]]]:
         if canonical.lower() in verified_lower or any(a.strip() in verified_lower for a in aliases):
             verified_keywords.add(canonical)
 
-    projects: List[Dict[str, Any]] = [
+    # Curated, strictly grounded project catalog (only included when verified in master_profile.md or base_cv.tex)
+    curated_catalog: List[Dict[str, Any]] = [
         {
+            "verify_key": "webserv",
             "name": "Webserv -- École 42",
-            "subtitle": r"Serveur HTTP \& Sécurité Réseau en C++",
+            "subtitle": r"Serveur HTTP/1.1 \& Sécurité Réseau en C++ (Équipe)",
+            "url": "https://github.com/Devilijho/webserv",
             "bullets": [
                 r"Développement d'un serveur HTTP/1.1 conforme RFC avec multiplexation d'I/O non-bloquantes (\texttt{select}/\texttt{poll}/\texttt{kqueue}).",
                 r"Sécurisation du parsing des requêtes contre les attaques par déni de service (DoS), corruption de flux et injection de payloads.",
                 r"Gestion rigoureuse des descripteurs de fichiers, des sessions TCP et des codes d'état HTTP.",
             ],
-            "search_blob": "webserv c++ http tcp réseau sécurité backend serveur linux unix select poll kqueue",
+            "lm_pitch": "Webserv, un serveur HTTP/1.1 non-bloquant en C++ intégrant multiplexation I/O et sécurisation contre les requêtes malveillantes",
+            "search_blob": "webserv c++ http tcp réseau sécurité backend serveur linux unix select poll kqueue api",
         },
         {
+            "verify_key": "inception",
+            "name": "Inception -- École 42",
+            "subtitle": r"Infrastructure Conteneurisée Docker (Solo)",
+            "url": "https://github.com/Devilijho/Inception",
+            "bullets": [
+                r"Déploiement d'une infrastructure multi-services isolée (NGINX TLS, WordPress + PHP-FPM, MariaDB) orchestrée via Docker Compose.",
+                r"Rédaction de Dockerfiles sécurisés sous Linux, gestion des réseaux virtuels dédiés et persistance des volumes.",
+                r"Configuration du reverse proxy NGINX et durcissement des règles réseau entre conteneurs.",
+            ],
+            "lm_pitch": "Inception, une infrastructure Docker Compose sécurisée combinant NGINX, PHP-FPM et MariaDB sous Linux",
+            "search_blob": "inception docker dockerfile docker-compose nginx mariadb linux sysadmin devops réseau sécurité infrastructure shell",
+        },
+        {
+            "verify_key": "transcendence",
+            "name": "Transcendence -- École 42",
+            "subtitle": r"Application Web Temps Réel TypeScript \& Docker (Équipe)",
+            "url": "https://github.com/LucLgdm/Transcendence",
+            "bullets": [
+                r"Conception d'une application web multijoueur en temps réel (Pong et Échecs) avec fonctionnalités sociales.",
+                r"Développement en TypeScript, JavaScript, HTML5/CSS3 avec environnement conteneurisé via Docker et Makefile.",
+                r"Travail collaboratif sous Git avec gestion de branches, revue de code et intégration continue des modules.",
+            ],
+            "lm_pitch": "Transcendence, une application web multijoueur temps réel en TypeScript et Docker réalisée en équipe",
+            "search_blob": "transcendence typescript javascript html css fullstack frontend backend web docker git équipe temps réel",
+        },
+        {
+            "verify_key": "chaski-booking",
+            "name": "Chaski Booking",
+            "subtitle": r"Plateforme SaaS Multi-Tenant TypeScript \& PostgreSQL (Équipe)",
+            "url": "",
+            "bullets": [
+                r"Développement d'une plateforme de réservation en ligne multi-tenant (catalogue de services, fidélité, cartes cadeaux).",
+                r"Modélisation et versioning du schéma PostgreSQL / PLpgSQL (migrations Supabase) et intégrations Stripe / Google Calendar.",
+                r"Architecture modulaire en TypeScript et scripts Shell pour le déploiement et la maintenance.",
+            ],
+            "lm_pitch": "Chaski Booking, une plateforme SaaS multi-tenant en TypeScript et PostgreSQL/Supabase avec paiements Stripe",
+            "search_blob": "chaski-booking typescript javascript sql postgresql plpgsql supabase fullstack backend frontend api rest saas",
+        },
+        {
+            "verify_key": "minishell",
+            "name": "Minishell -- École 42",
+            "subtitle": r"Interpréteur de Commandes UNIX en C (Solo)",
+            "url": "https://github.com/Devilijho/Minishell",
+            "bullets": [
+                r"Implémentation d'un shell POSIX-like en C gérant l'exécution de commandes, variables d'environnement et \texttt{PATH}.",
+                r"Gestion bas niveau des appels système UNIX : processus (\texttt{fork}/\texttt{execve}), pipes (\texttt{|}), redirections et signaux.",
+                r"Validation mémoire stricte sous Valgrind et gestion robuste des cas limites de parsing.",
+            ],
+            "lm_pitch": "Minishell, un interpréteur de commandes UNIX développé en C autour des appels système, pipes et signaux",
+            "search_blob": "minishell c linux unix shell bash processus pipes signaux système valgrind parsing",
+        },
+        {
+            "verify_key": "cub3d",
             "name": "Cub3d -- École 42",
-            "subtitle": r"Moteur 3D \& Gestion Mémoire Bas Niveau en C",
+            "subtitle": r"Moteur 3D \& Audit Mémoire Bas Niveau en C (Solo)",
+            "url": "https://github.com/Devilijho/Cub3d",
             "bullets": [
-                r"Implémentation d'un moteur de rendu graphique par raycasting (algorithmique bas niveau et arithmétique de pointeurs).",
-                r"Audit de sécurité mémoire : prévention proactive des débordements de tampon (buffer overflows) et validation stricte avec Valgrind.",
-                r"Parsing défensif des fichiers de configuration de scènes (validation stricte des entrées utilisateurs).",
+                r"Implémentation d'un moteur de rendu graphique 3D par raycasting (algorithmique bas niveau et arithmétique de pointeurs).",
+                r"Audit de sécurité mémoire : prévention des débordements de tampon (buffer overflows) et validation zéro-fuite sous Valgrind.",
+                r"Parsing défensif des fichiers de configuration de scènes avec validation stricte des entrées.",
             ],
-            "search_blob": "cub3d c valgrind gdb mémoire sécurité buffer overflow parsing linux",
+            "lm_pitch": "Cub3d, un moteur 3D en C validé sans fuite mémoire sous Valgrind avec parsing défensif",
+            "search_blob": "cub3d c valgrind gdb mémoire sécurité buffer overflow parsing linux algorithmique",
         },
         {
-            "name": "Game Jam IUT Paris-Saclay",
-            "subtitle": "Hackathon de Programmation (36h)",
+            "verify_key": "stage-automation-pipeline",
+            "name": "StageBot -- Pipeline d'Automatisation",
+            "subtitle": r"Outil Python, Web UI \& LaTeX (Solo)",
+            "url": "https://github.com/Devilijho/stage-automation-pipeline",
             "bullets": [
-                r"Conception rapide et sécurisée d'un exécutable complet sous contrainte de temps stricte.",
-                r"Structuration de la logique applicative, gestion des états et tests fonctionnels en équipe.",
+                r"Développement en Python d'une application locale avec serveur HTTP, interface web et automatisation navigateur (Playwright).",
+                r"Extraction et analyse de données web multi-sources avec génération automatisée de documents PDF via LaTeX.",
+                r"Architecture modulaire CLI + Web UI avec suivi structuré des données et tests de validation.",
             ],
-            "search_blob": "game jam hackathon agile équipe c# java python c++ logique applicative tests",
+            "lm_pitch": "StageBot, un pipeline Python d'automatisation web (Playwright, serveur HTTP et génération PDF)",
+            "search_blob": "stagebot python html automation playwright scraping backend web api cli shell",
+        },
+        {
+            "verify_key": "portfolio-iut",
+            "name": "Portfolio Professionnel -- IUT d'Orsay",
+            "subtitle": r"Application Frontend React 18, TypeScript \& Vite (Solo)",
+            "url": "https://github.com/Devilijho/portfolio-iut",
+            "bullets": [
+                r"Développement d'une application web modulaire en React 18 et TypeScript avec build Vite et thème Dark/Light en CSS3.",
+                r"Structuration en composants réutilisables, typage strict et interface responsive.",
+            ],
+            "lm_pitch": "une application web modulaire développée en React 18, TypeScript et Vite à l'IUT d'Orsay",
+            "search_blob": "portfolio react typescript javascript html css frontend ui ux vite web",
+        },
+        {
+            "verify_key": "game jam",
+            "name": "Game Jam IUT Paris-Saclay",
+            "subtitle": "Hackathon de Programmation (36h, Équipe)",
+            "url": "",
+            "bullets": [
+                r"Conception rapide et fiable d'un exécutable complet sous contrainte de temps stricte en équipe.",
+                r"Structuration de la logique applicative, gestion des états et tests fonctionnels.",
+            ],
+            "lm_pitch": "la Game Jam de l'IUT Paris-Saclay, un hackathon de 36h en équipe sous contrainte de temps",
+            "search_blob": "game jam hackathon agile équipe java python c++ logique applicative tests",
         },
     ]
 
-    if MASTER_PROFILE_PATH.exists():
-        md = MASTER_PROFILE_PATH.read_text(encoding="utf-8")
-        repo_blocks = re.split(r"\n###\s+", md)
-        for block in repo_blocks[1:]:
-            lines = block.splitlines()
-            repo_header = lines[0].replace("[PRIORITY]", "").strip()
-            repo_short = repo_header.split("/")[-1]
-            if repo_short.lower() in {"webserv", "cub3d"}:
-                continue
-
-            desc = ""
-            langs = ""
-            commits = 0
-            contribs: List[str] = []
-            files: List[str] = []
-            for l in lines[1:]:
-                if l.startswith("- **Description**:"):
-                    desc = l.split(":", 1)[1].strip()
-                elif l.startswith("- **Languages**:"):
-                    langs = l.split(":", 1)[1].strip()
-                elif l.startswith("- **Verified Personal Commits**:"):
-                    try:
-                        commits = int(l.split(":", 1)[1].strip())
-                    except ValueError:
-                        commits = 0
-                elif l.startswith("- **Files Personally Touched**:"):
-                    files = re.findall(r"`([^`]+)`", l)
-                elif l.startswith("  - "):
-                    contribs.append(l[4:].strip())
-
-            if commits == 0 and "priority" not in lines[0].lower():
-                continue
-
-            bullets: List[str] = []
-            if desc and desc != "No description provided":
-                bullets.append(latex_escape(desc))
-            if langs and langs != "Unspecified":
-                bullets.append(f"Stack technique vérifiée : {latex_escape(langs)}.")
-            if contribs:
-                summary_contrib = "; ".join(contribs[:3])
-                bullets.append(f"Contributions personnelles ({commits} commits) : {latex_escape(summary_contrib)}.")
-            elif files:
-                bullets.append(f"Modules développés : \\texttt{{{latex_escape(', '.join(files[:4]))}}}.")
-
-            if bullets:
-                projects.append({
-                    "name": latex_escape(repo_short),
-                    "subtitle": latex_escape(f"Projet GitHub ({langs})" if langs != "Unspecified" else "Projet GitHub"),
-                    "bullets": bullets[:3],
-                    "search_blob": f"{repo_short} {desc} {langs} {' '.join(contribs)} {' '.join(files)}".lower(),
-                })
-
+    projects: List[Dict[str, Any]] = [
+        p for p in curated_catalog if p["verify_key"] in verified_lower
+    ]
     return verified_keywords, projects
 
 
@@ -274,53 +375,69 @@ def build_cv_title(role: str, matched_keywords: List[str]) -> str:
 
 
 def build_cv_accroche(
-    profile: Dict[str, Any], role: str, matched_keywords: List[str]
+    profile: Dict[str, Any], role: str, matched_keywords: List[str], archetype: str = "systems"
 ) -> str:
     kw_list = matched_keywords[:5] if matched_keywords else ["C/C++", "Linux", "Git", "SQL"]
     kw_str = latex_escape(", ".join(kw_list))
+    role_prose = latex_escape(clean_role_for_prose(role))
     edu = profile.get("education", {})
     intern = profile.get("internship", {})
     school = edu.get("school", "IUT d'Orsay")
-    degree = edu.get("degree", "BUT Informatique")
-    secondary = edu.get("secondary_school", "École 42 Paris")
+    secondary = edu.get("secondary_school", "École 42 Paris (Tronc Commun validé)")
     avail = intern.get("availability_short", "Du 03/05 au 16/07 (3 mois, prolongeable durant l'été)")
+
+    focus_map = {
+        "cyber": "Spécialisé en réseaux, cryptographie et sécurité bas niveau",
+        "infra": "Orienté administration systèmes Linux, conteneurisation Docker et architecture réseau",
+        "web": "Expérimenté en développement web full-stack, bases de données SQL et conteneurisation",
+        "systems": "Orienté ingénierie logicielle, programmation systèmes UNIX et architecture réseau",
+    }
+    focus_line = focus_map.get(archetype, focus_map["systems"])
     return (
-        f"Étudiant en {latex_escape(degree)} ({latex_escape(school)}) "
-        f"avec {latex_escape(secondary)}, je recherche un stage ({latex_escape(avail)}) "
-        f"en tant que {latex_escape(role)}. Opérationnel sur {kw_str}, rigoureux et autonome, "
-        f"je souhaite m'investir pleinement au sein de vos équipes techniques."
+        f"Étudiant en BUT 2 Informatique à {latex_escape(school)} et issu de {latex_escape(secondary)}, "
+        f"je recherche un stage conventionné ({latex_escape(avail)}) en tant que {role_prose}. "
+        f"{focus_line}, je suis opérationnel sur {kw_str} et prêt à contribuer concrètement à vos projets techniques."
     )
 
 
-def build_skills_block(matched_keywords: List[str]) -> str:
-    matched_set = set(matched_keywords)
+def build_skills_block(matched_keywords: List[str], verified_keywords: Optional[set] = None) -> str:
+    matched_set = {m.lower() for m in matched_keywords}
+    verified_set = {v.lower() for v in (verified_keywords or set())}
+
+    lang_items = ["C", "C++", "TypeScript", "JavaScript", "Java", "SQL (PostgreSQL / Oracle / SQLite)", "HTML5/CSS3", "Assembly (x86)", "Notions de C\\#"]
+    if "python" in verified_set:
+        lang_items.insert(2, "Python")
+
     categories = [
-        (
-            "Langages",
-            ["C", "C++", "Assembly (x86)", "TypeScript", "JavaScript", "Java", "SQL (Oracle / SQLite)", "HTML5/CSS3", "Notions de C\\#"],
-        ),
+        ("Langages", lang_items),
         (
             "Systèmes \\& DevOps",
-            ["Linux (UNIX)", "Docker", "Git", "Windows", "MacOS", "VirtualBox"],
+            ["Linux (UNIX / Bash)", "Docker \\& Docker Compose", "NGINX", "Git", "Windows", "MacOS", "VirtualBox"],
         ),
         (
             "Sécurité \\& Débogage",
-            ["Cybersécurité", "Réseaux", "Cryptographie", "GDB", "Valgrind (Memcheck, Helgrind)", "Analyse mémoire", "Reverse Engineering"],
+            ["Cybersécurité", "Réseaux (TCP/IP, HTTP)", "Cryptographie", "GDB", "Valgrind (Memcheck, Helgrind)", "Analyse mémoire", "Reverse Engineering"],
         ),
         (
             "Frameworks \\& Outils",
-            ["Node.js", "React", "Three.js", "API REST", "Eclipse", "Visual Paradigm", "Modélisation (MCD/SR)"],
+            ["React", "Node.js", "Vite", "Three.js", "API REST", "Supabase", "Eclipse", "Modélisation (MCD/SR)"],
         ),
     ]
 
-    def score_item(item: str) -> int:
-        return 1 if any(m.lower() in item.lower() for m in matched_set) else 0
+    def is_matched(item: str) -> bool:
+        it_l = item.lower()
+        return any(
+            (m == "c" and item == "C")
+            or (m != "c" and m in it_l)
+            for m in matched_set
+        )
 
     scored_cats = []
     for cat_name, items in categories:
-        reordered = sorted(items, key=lambda x: -score_item(x))
-        cat_score = sum(score_item(x) for x in items)
-        scored_cats.append((cat_score, cat_name, reordered))
+        reordered = sorted(items, key=lambda x: -int(is_matched(x)))
+        formatted = [f"\\textbf{{{x}}}" if is_matched(x) else x for x in reordered]
+        cat_score = sum(int(is_matched(x)) for x in items)
+        scored_cats.append((cat_score, cat_name, formatted))
 
     scored_cats.sort(key=lambda t: -t[0])
     lines = ["\\section*{Compétences Techniques}", "{\\small"]
@@ -354,7 +471,8 @@ def select_and_format_projects(
     for idx, proj in enumerate(selected):
         if idx > 0:
             lines.append("\\vspace{0.22em}")
-        lines.append(f"\\textbf{{{proj['name']}}} --- \\textit{{{proj['subtitle']}}}")
+        link_str = f" \\textperiodcentered{{}} \\href{{{proj['url']}}}{{\\texttt{{GitHub}}}}" if proj.get("url") else ""
+        lines.append(f"\\textbf{{{proj['name']}}} --- \\textit{{{proj['subtitle']}}}{link_str}")
         lines.append("\\begin{itemize}")
         for b in proj["bullets"][:max_bullets]:
             lines.append(f"  \\item {b}")
@@ -425,42 +543,85 @@ def build_lm_tex(
     role: str,
     selected_projects: List[Dict[str, Any]],
     matched_keywords: List[str],
+    job_text: str = "",
+    archetype: str = "systems",
 ) -> str:
     base_lm = BASE_LM_PATH.read_text(encoding="utf-8")
-    proj_names = ", ".join(p["name"].split("--")[0].strip() for p in selected_projects[:2])
     kw_str = ", ".join(matched_keywords[:5]) if matched_keywords else "C/C++, TypeScript, Linux, Git, Docker"
+    role_prose = clean_role_for_prose(role)
+    city = infer_offer_city(job_text)
     edu = profile.get("education", {})
     intern = profile.get("internship", {})
+    personal = profile.get("personal", {})
+    my_city = personal.get("city", "Bures-sur-Yvette")
     avail_short = intern.get("availability_short", "du 03/05 au 16/07 (3 mois, prolongeable l'été)")
     avail_full = intern.get("availability_full", "Stage de 3 mois du 3 mai au 16 juillet, avec possibilité de prolongation sur l'été")
-    degree = edu.get("degree", "BUT Informatique")
-    school = edu.get("school", "IUT d'Orsay")
-    secondary = edu.get("secondary_school", "École 42 Paris")
+    school = edu.get("school", "Université Paris-Saclay (IUT d'Orsay)")
+    secondary = edu.get("secondary_school", "École 42 Paris (Tronc Commun validé)")
 
+    p1_pitch = selected_projects[0].get("lm_pitch", selected_projects[0]["name"]) if selected_projects else "Webserv"
+    p2_pitch = selected_projects[1].get("lm_pitch", selected_projects[1]["name"]) if len(selected_projects) > 1 else ""
+
+    date_line = f"{latex_escape(my_city)}, le {latex_escape(format_french_date())}\\\\[0.6em]"
     recipient = (
         f"\\textbf{{À l'attention de l'équipe de recrutement}}\\\\\n"
-        f"{latex_escape(company)}\\\\\nFrance"
+        f"{latex_escape(company)}\\\\\n{latex_escape(city)}"
     )
     obj = (
-        f"\\textbf{{Objet :}} Candidature pour un stage ({latex_escape(avail_short)}) "
-        f"-- {latex_escape(role)}"
-    )
-    vous = (
-        f"Actuellement étudiant en {latex_escape(degree)} à {latex_escape(school)} "
-        f"et fort de {latex_escape(secondary)}, je souhaite rejoindre {latex_escape(company)} dans le cadre d'un "
-        f"{latex_escape(avail_full.lower())}. "
-        f"Votre offre de {latex_escape(role)} retient particulièrement mon attention par la richesse de ses enjeux techniques."
-    )
-    moi = (
-        f"Ma double formation m'a permis de développer une solide maîtrise de la programmation système et applicative "
-        f"({latex_escape(kw_str)}). À travers des projets concrets tels que \\textit{{{latex_escape(proj_names)}}}, "
-        f"j'ai conçu, sécurisé et livré des solutions fiables en autonomie comme en travail d'équipe sous Git et Linux."
-    )
-    nous = (
-        f"Rejoindre {latex_escape(company)} serait l'opportunité de mettre ma rigueur, ma capacité d'adaptation "
-        f"et mon esprit d'équipe au service de vos projets en production, tout en progressant aux côtés de vos ingénieurs."
+        f"\\textbf{{Objet :}} Candidature pour un stage conventionné ({latex_escape(avail_short)}) "
+        f"-- {latex_escape(role_prose)}"
     )
 
+    vous_hooks = {
+        "cyber": (
+            f"Les enjeux de sécurité, de fiabilité et de protection des systèmes portés par {latex_escape(company)} "
+            f"résonnent directement avec mon parcours. Votre offre de stage en tant que {latex_escape(role_prose)} "
+            f"autour de {latex_escape(kw_str)} retient particulièrement mon attention, et je souhaite vous proposer "
+            f"ma candidature pour un {latex_escape(avail_full.lower())} (stage conventionné, Université Paris-Saclay)."
+        ),
+        "infra": (
+            f"La solidité des infrastructures et l'exigence opérationnelle de {latex_escape(company)} "
+            f"correspondent pleinement à ce que je recherche pour mettre en pratique mes acquis en systèmes et réseaux. "
+            f"Votre offre de stage de {latex_escape(role_prose)} mobilisant {latex_escape(kw_str)} a immédiatement retenu "
+            f"mon attention dans le cadre de mon {latex_escape(avail_full.lower())} (stage conventionné, Université Paris-Saclay)."
+        ),
+        "web": (
+            f"La conception de produits logiciels fiables et évolutifs au sein de {latex_escape(company)} "
+            f"correspond directement à mon envie de contribuer à des applications en production. "
+            f"Votre offre de stage de {latex_escape(role_prose)} autour de {latex_escape(kw_str)} m'intéresse tout particulièrement "
+            f"pour mon {latex_escape(avail_full.lower())} (stage conventionné, Université Paris-Saclay)."
+        ),
+        "systems": (
+            f"Les défis d'ingénierie logicielle et de performance technique menés chez {latex_escape(company)} "
+            f"correspondent pleinement à mes aspirations professionnelles. Votre offre de stage de {latex_escape(role_prose)} "
+            f"autour de {latex_escape(kw_str)} a retenu toute mon attention dans le cadre de mon "
+            f"{latex_escape(avail_full.lower())} (stage conventionné, Université Paris-Saclay)."
+        ),
+    }
+    vous = vous_hooks.get(archetype, vous_hooks["systems"])
+
+    proj_sentence = f"J'ai notamment conçu {latex_escape(p1_pitch)}"
+    if p2_pitch:
+        proj_sentence += f", ainsi que {latex_escape(p2_pitch)}"
+    proj_sentence += "."
+
+    moi = (
+        f"Actuellement en BUT 2 Informatique à {latex_escape(school)} (parcours Réseaux, Cryptographie et Sécurité) "
+        f"et fort de {latex_escape(secondary)}, j'ai développé une solide autonomie technique sur {latex_escape(kw_str)} "
+        f"et les environnements Linux/Git. {proj_sentence} "
+        f"Mon expérience antérieure en gestion opérationnelle e-commerce m'a également appris le sens des priorités, "
+        f"la résolution pragmatique de problèmes et le travail rigoureux orienté résultat."
+    )
+
+    nous = (
+        f"Intégrer l'équipe de {latex_escape(company)} serait l'opportunité d'apporter ma capacité d'apprentissage rapide "
+        f"(peer-learning à 42), ma rigueur technique et mon profil trilingue (français, anglais, espagnol) sur vos "
+        f"chantiers en cours, tout en gagnant en maturité au contact de vos ingénieurs. "
+        f"Je serais ravi d'échanger avec vous lors d'un entretien ou d'un test technique."
+    )
+
+    if "% === LM_DATE_START ===" in base_lm:
+        base_lm = replace_marker_block(base_lm, "LM_DATE", date_line)
     lm = replace_marker_block(base_lm, "LM_RECIPIENT", recipient)
     lm = replace_marker_block(lm, "LM_OBJECT", obj)
     lm = replace_marker_block(lm, "LM_VOUS", vous)
@@ -470,6 +631,28 @@ def build_lm_tex(
 
 
 def check_and_log_application(
+    company: str,
+    role: str,
+    url: str,
+    cv_title: str,
+    matched_keywords: List[str],
+    cv_pdf: Path,
+    lm_pdf: Path,
+    force: bool = False,
+) -> bool:
+    APPS_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = APPS_CSV_PATH.parent / ".applications.csv.lock"
+    with lock_path.open("w", encoding="utf-8") as lock_f:
+        fcntl.flock(lock_f, fcntl.LOCK_EX)
+        try:
+            return _check_and_log_application_unlocked(
+                company, role, url, cv_title, matched_keywords, cv_pdf, lm_pdf, force=force
+            )
+        finally:
+            fcntl.flock(lock_f, fcntl.LOCK_UN)
+
+
+def _check_and_log_application_unlocked(
     company: str,
     role: str,
     url: str,
@@ -598,8 +781,9 @@ def main() -> int:
     lm_tex_path = target_dir / f"LM_{my_name_slug}_{company_slug}.tex"
 
     base_cv = BASE_CV_PATH.read_text(encoding="utf-8")
-    accroche = build_cv_accroche(profile, role, matched_keywords)
-    skills_block = build_skills_block(matched_keywords)
+    archetype = detect_role_archetype(role, job_text, matched_keywords)
+    accroche = build_cv_accroche(profile, role, matched_keywords, archetype=archetype)
+    skills_block = build_skills_block(matched_keywords, verified_keywords=verified_keywords)
 
     selected_projects: List[Dict[str, Any]] = []
     cv_pdf_path: Optional[Path] = None
@@ -619,7 +803,7 @@ def main() -> int:
             cv_tex = replace_marker_block(
                 cv_tex,
                 "CV_AVAILABILITY",
-                f"{{\\small\\textbf{{Disponibilité :}} {latex_escape(avail_short)}}}\\\\[0.15em]",
+                f"{{\\small\\textbf{{Disponibilité :}} {latex_escape(avail_short)} \\textperiodcentered{{}} Stage conventionné (Université Paris-Saclay)}}\\\\[0.15em]",
             )
         cv_tex = replace_marker_block(cv_tex, "CV_ACCROCHE", f"{{\\small\\itshape\n{accroche}\n}}")
         cv_tex = replace_marker_block(cv_tex, "SKILLS_SECTION", skills_block)
@@ -637,7 +821,9 @@ def main() -> int:
     if not cv_ok and cv_pdf_path:
         print(f"[!] Check {cv_pdf_path} (pages={pages}).")
 
-    lm_tex = build_lm_tex(profile, company, role, selected_projects, matched_keywords)
+    lm_tex = build_lm_tex(
+        profile, company, role, selected_projects, matched_keywords, job_text=job_text, archetype=archetype
+    )
     lm_tex_path.write_text(lm_tex, encoding="utf-8")
     lm_pdf_path, lm_log = compile_tex(lm_tex_path)
     _, lm_pages, _ = verify_pdf_one_page(lm_pdf_path, lm_log)

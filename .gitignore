@@ -6,13 +6,16 @@ __pycache__/
 .chrome_profile/
 
 # Personal data & generated artifacts (keep private)
+.env
 config/profile.json
 config/master_profile.md
 config/curriculum_but2_b.md
 data/applications.csv
 data/rapport_candidatures.html
 data/unanswered_questions.json
+data/llm_answer_cache.json
 output/
+debug/
 
 # LaTeX build outputs
 *.pdf

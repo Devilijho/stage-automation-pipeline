@@ -18,8 +18,10 @@ import argparse
 import asyncio
 import csv
 import json
+import os
 import re
 import sys
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -33,16 +35,74 @@ PROFILE_PATH = WORKSPACE / "config" / "profile.json"
 MASTER_PROFILE_PATH = WORKSPACE / "config" / "master_profile.md"
 APPS_CSV_PATH = WORKSPACE / "data" / "applications.csv"
 UNANSWERED_QUESTIONS_PATH = WORKSPACE / "data" / "unanswered_questions.json"
+LLM_CACHE_PATH = WORKSPACE / "data" / "llm_answer_cache.json"
 CHROME_PROFILE_DIR = WORKSPACE / ".chrome_profile"
+DEBUG_DIR = WORKSPACE / "debug"
+
+
+def _load_project_env(env_path: Path = WORKSPACE / ".env") -> None:
+    """Load key=value pairs from project-local .env without touching global PC env."""
+    if not env_path.exists():
+        return
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            k, v = s.split("=", 1)
+            k = k.strip()
+            v = v.strip().strip('"').strip("'")
+            if k and v:
+                os.environ.setdefault(k, v)
+    except Exception:
+        pass
+
+
+_load_project_env()
 
 CONFIRMATION_PHRASES = [
     "votre candidature a été envoyée",
+    "votre candidature a bien été",
+    "candidature a bien été",
+    "votre candidature a été transmise",
+    "candidature bien envoyée",
     "candidature envoyée",
+    "candidature transmise",
+    "candidature prise en compte",
+    "nous avons bien reçu votre candidature",
+    "vous avez déjà postulé",
+    "vous avez postulé",
+    "déjà postulé",
+    "postulé",
+    "félicitations, votre candidature",
     "application sent",
+    "application submitted",
     "your application was sent",
+    "your application has been submitted",
     "merci pour votre candidature",
+    "merci !",
+    "merci,",
     "thank you for applying",
+    "thank you for your application",
+    "thank you!",
     "candidature enregistrée",
+]
+
+EXPIRED_OFFER_PHRASES = [
+    "offre expirée",
+    "cette offre a expiré",
+    "n'est plus disponible",
+    "n’est plus disponible",
+    "cette offre n'est plus",
+    "cette offre n’est plus",
+    "poste pourvu",
+    "offre pourvue",
+    "les candidatures ne sont plus acceptées",
+    "no longer accepting applications",
+    "this job has expired",
+    "job has expired",
+    "no longer available",
+    "expired",
 ]
 
 
@@ -94,6 +154,160 @@ def load_saved_unanswered_answers(path: Path = UNANSWERED_QUESTIONS_PATH) -> Dic
         return {}
 
 
+def load_llm_cache() -> Dict[str, str]:
+    if not LLM_CACHE_PATH.exists():
+        return {}
+    try:
+        data = json.loads(LLM_CACHE_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_llm_cache(cache: Dict[str, str]) -> None:
+    try:
+        LLM_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        LLM_CACHE_PATH.write_text(json.dumps(cache, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def ask_llm_for_field(
+    field_type: str,
+    question: str,
+    options: List[str],
+    answers: Dict[str, str],
+    verified_skills: Set[str],
+) -> str:
+    """Lightweight cached LLM fallback for required unknown form questions.
+
+    Auto-selects first available backend:
+      1. Local Ollama (http://127.0.0.1:11434, 100% free / 0 tokens)
+      2. Gemini API free tier (GEMINI_API_KEY -> gemini-2.5-flash-lite)
+      3. Groq API free tier (GROQ_API_KEY -> llama-3.1-8b-instant)
+      4. OpenAI API (OPENAI_API_KEY -> gpt-4o-mini)
+    """
+    q_clean = re.sub(r"\s+", " ", (question or "")).strip()
+    if not q_clean:
+        return ""
+    cache_key = f"{field_type}|{q_clean.lower()}|{'||'.join(options[:20])}"
+    cache = load_llm_cache()
+    if cache_key in cache:
+        return cache[cache_key]
+
+    facts = (
+        f"Candidate: {answers.get('nom_complet', 'Santiago FUENTES LLANOS')}, "
+        f"Education: {answers.get('formation', 'BUT 2 Informatique')} ({answers.get('ecole', 'IUT d\'Orsay')}) & École 42 Paris, "
+        f"Level: {answers.get('niveau', 'Bac+2 / BUT 2')}, "
+        f"City: {answers.get('ville', 'Bures-sur-Yvette')} (91440, Essonne, Île-de-France), "
+        f"Internship: {answers.get('disponibilite', '03/05 to 16/07, 3 months, extendable summer')}, "
+        f"Work auth France: {answers.get('autorisation_travail', 'Oui')}, Visa sponsorship needed: Non, "
+        f"Languages: Spanish (native), French (C1), English (C1), "
+        f"Verified skills: {', '.join(sorted(verified_skills)[:25])}."
+    )
+    opt_line = f"\nAllowed options (pick ONE verbatim): {options[:25]}" if options else ""
+    prompt = (
+        f"You fill job application forms strictly grounded in these candidate facts:\n{facts}\n\n"
+        f"Field type: {field_type}\nQuestion: {q_clean}{opt_line}\n"
+        f"Rules: Reply with ONLY the concise answer value (no quotes, no explanation). "
+        f"If options are listed, return ONE exact option string verbatim. Never invent skills. "
+        f"If unsure, reply EMPTY."
+    )
+
+    provider = ""
+    raw_ans = ""
+
+    # 1. Local Ollama (free, unlimited)
+    try:
+        ollama_model = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b")
+        req = urllib.request.Request(
+            "http://127.0.0.1:11434/api/generate",
+            data=json.dumps({"model": ollama_model, "prompt": prompt, "stream": False}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=8) as r:
+            body = json.loads(r.read().decode("utf-8"))
+            raw_ans = (body.get("response") or "").strip()
+            provider = f"ollama:{ollama_model}"
+    except Exception:
+        pass
+
+    # 2. Gemini API free tier
+    if not raw_ans and os.environ.get("GEMINI_API_KEY"):
+        g_key = os.environ["GEMINI_API_KEY"].strip()
+        g_models = [os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite").strip(), "gemini-3.5-flash"]
+        for g_model in dict.fromkeys(m for m in g_models if m):
+            try:
+                req = urllib.request.Request(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{g_model}:generateContent?key={g_key}",
+                    data=json.dumps({
+                        "contents": [{"parts": [{"text": prompt}]}],
+                        "generationConfig": {"maxOutputTokens": 40, "temperature": 0.0},
+                    }).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    body = json.loads(r.read().decode("utf-8"))
+                    raw_ans = (
+                        body.get("candidates", [{}])[0]
+                        .get("content", {})
+                        .get("parts", [{}])[0]
+                        .get("text", "")
+                        .strip()
+                    )
+                    provider = f"gemini:{g_model}"
+                    break
+            except Exception as e:
+                err_txt = str(e)
+                if "404" in err_txt:
+                    continue
+                print(f"  [!] Gemini API error ({g_model}): {err_txt[:120]}")
+                break
+
+    # 3. Groq / OpenAI compatible
+    if not raw_ans and (os.environ.get("GROQ_API_KEY") or os.environ.get("OPENAI_API_KEY")):
+        try:
+            use_groq = bool(os.environ.get("GROQ_API_KEY"))
+            api_key = (os.environ.get("GROQ_API_KEY") if use_groq else os.environ.get("OPENAI_API_KEY") or "").strip()
+            endpoint = "https://api.groq.com/openai/v1/chat/completions" if use_groq else "https://api.openai.com/openai/v1/chat/completions"
+            model = "llama-3.1-8b-instant" if use_groq else "gpt-4o-mini"
+            req = urllib.request.Request(
+                endpoint,
+                data=json.dumps({
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 40,
+                    "temperature": 0.0,
+                }).encode("utf-8"),
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as r:
+                body = json.loads(r.read().decode("utf-8"))
+                raw_ans = body.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                provider = f"{'groq' if use_groq else 'openai'}:{model}"
+        except Exception:
+            pass
+
+    ans = raw_ans.splitlines()[0].strip(" \"'`") if raw_ans else ""
+    if not ans or ans.upper() == "EMPTY":
+        return ""
+    if options:
+        exact = next((o for o in options if o.lower() == ans.lower()), None)
+        if not exact:
+            exact = next((o for o in options if ans.lower() in o.lower() or o.lower() in ans.lower()), None)
+        if not exact:
+            return ""
+        ans = exact
+
+    cache[cache_key] = ans
+    save_llm_cache(cache)
+    print(f"  [LLM:{provider}] {q_clean} -> {ans}")
+    return ans
+
+
 def log_unanswered_question(
     field_type: str,
     question: str,
@@ -102,39 +316,8 @@ def log_unanswered_question(
     url: str = "",
     path: Path = UNANSWERED_QUESTIONS_PATH,
 ) -> None:
-    """Append a deduplicated unanswered question with blank answer to data/unanswered_questions.json."""
-    q_clean = re.sub(r"\s+", " ", question).strip()
-    if not q_clean:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    entries: List[Dict[str, Any]] = []
-    if path.exists():
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(loaded, list):
-                entries = loaded
-        except Exception:
-            entries = []
-
-    norm_key = (field_type.lower(), q_clean.lower())
-    for existing in entries:
-        if (
-            str(existing.get("field_type", "")).lower(),
-            str(existing.get("question", "")).strip().lower(),
-        ) == norm_key:
-            return
-
-    entries.append(
-        {
-            "field_type": field_type,
-            "question": q_clean,
-            "options": options,
-            "company": company,
-            "url": url,
-            "answer": "",
-        }
-    )
-    path.write_text(json.dumps(entries, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    """Manual unanswered_questions.json logging disabled in favor of cached LLM auto-answer."""
+    return
 
 
 # Known multi-word or symbolic skills to match safely against config/master_profile.md
@@ -174,6 +357,15 @@ def classify_yes_no_question(question: str, verified_skills: Set[str]) -> Option
     # 1. Explicit "No" cases (visa/disability, higher degree than BUT 2, or unverified domains like mobile)
     if any(k in q for k in ("visa", "sponsor", "parrainage", "handicap", "disability")):
         return ("Non", "No")
+    if any(k in q for k in ("receive text", "sms messages", "communities for future")):
+        return ("Non", "No")
+    if any(k in q for k in (
+        "privacy notice", "privacy policy", "read and agree", "politique de confidentialit",
+        "lu et accept", "allowing", "contact me", "me contacter", "rgpd", "gdpr",
+        "données personnelles", "personal data", "data processing", "traitement de mes données",
+        "consent", "i agree", "j'accepte", "j’accepte",
+    )):
+        return ("Oui", "Yes")
     if any(k in q for k in ("bac+5", "bac +5", "master 2", "m2", "fin d'études", "fin d'étude", "pfe")):
         if not any(k in q for k in ("bac+2", "bac +2", "bac+3", "bac +3", "but 2", "but 3")):
             return ("Non", "No")
@@ -248,6 +440,14 @@ def detect_ats_provider(url: str) -> str:
         return "Workday"
     if "welcometothejungle.com" in u:
         return "Welcome to the Jungle"
+    if "jobteaser.com" in u:
+        return "JobTeaser"
+    if "indeed.com" in u:
+        return "Indeed"
+    if "apec.fr" in u:
+        return "APEC"
+    if "meteojob.com" in u:
+        return "Meteojob"
     if "hellowork.com" in u:
         return "HelloWork"
     if "linkedin.com" in u:
@@ -255,6 +455,17 @@ def detect_ats_provider(url: str) -> str:
     if "taleo.net" in u:
         return "Taleo"
     return "External Portal"
+
+
+LOGIN_URLS: Dict[str, Tuple[str, str]] = {
+    "linkedin": ("LinkedIn", "https://www.linkedin.com/login"),
+    "hellowork": ("HelloWork", "https://www.hellowork.com/fr-fr/candidat/connexion-inscription.html"),
+    "wttj": ("Welcome to the Jungle", "https://www.welcometothejungle.com/fr"),
+    "jobteaser": ("JobTeaser", "https://www.jobteaser.com/fr/users/sign_in"),
+    "indeed": ("Indeed", "https://fr.indeed.com/account/login"),
+    "apec": ("APEC", "https://www.apec.fr"),
+    "meteojob": ("Meteojob", "https://www.meteojob.com/"),
+}
 
 
 async def accept_cookies_if_present(page: Page) -> bool:
@@ -307,55 +518,68 @@ async def click_apply_and_follow_redirect(page: Page) -> Tuple[Page, bool]:
         "a:has-text('Postuler sur le site'):visible",
         "button:has-text('Postuler'):visible",
         "a:has-text('Postuler'):visible",
+        "a[role='button']:has-text('Postuler'):visible",
         "button:has-text('Apply'):visible",
         "a:has-text('Apply'):visible",
+        "a[role='button']:has-text('Apply'):visible",
     ]
     try:
         await page.wait_for_selector(
-            "button.jobs-apply-button, button:has-text('Candidature simplifiée'), button:has-text('Easy Apply'), button:has-text('Postuler'), a:has-text('Postuler')",
+            "button.jobs-apply-button, button:has-text('Candidature simplifiée'), button:has-text('Easy Apply'), button:has-text('Postuler'), a:has-text('Postuler'), button:has-text('Apply'), a:has-text('Apply')",
             timeout=12000,
         )
     except Exception:
         pass
 
-    for sel in selectors:
-        try:
-            loc = page.locator(sel).first
-            if not await loc.is_visible(timeout=1200):
-                continue
-
-            initial_url = page.url
+    async def _handle_new_page(new_page: Page) -> Page:
+        await new_page.wait_for_load_state("domcontentloaded", timeout=15000)
+        await new_page.wait_for_timeout(1000)
+        await accept_cookies_if_present(new_page)
+        for sub_sel in [
+            "a:has-text('Apply for this job')",
+            "a:has-text('Postuler à ce poste')",
+            "button:has-text('Apply for this job')",
+            "button:has-text('Postuler à ce poste')",
+            "a.postings-btn[href*='/apply']",
+        ]:
             try:
-                async with page.expect_popup(timeout=6000) as popup_info:
-                    await loc.click()
-                new_page = await popup_info.value
-                await new_page.wait_for_load_state("domcontentloaded", timeout=15000)
-                await new_page.wait_for_timeout(1000)
-                await accept_cookies_if_present(new_page)
-                for sub_sel in [
-                    "a:has-text('Apply for this job')",
-                    "a:has-text('Postuler à ce poste')",
-                    "button:has-text('Apply for this job')",
-                    "button:has-text('Postuler à ce poste')",
-                    "a.postings-btn[href*='/apply']",
-                ]:
-                    try:
-                        sub_btn = new_page.locator(sub_sel).first
-                        if await sub_btn.is_visible(timeout=1000):
-                            await sub_btn.click()
-                            await new_page.wait_for_load_state("domcontentloaded", timeout=12000)
-                            await new_page.wait_for_timeout(800)
-                            break
-                    except Exception:
-                        continue
-                return new_page, True
-            except PlaywrightTimeout:
-                await page.wait_for_timeout(1200)
-                if page.url != initial_url:
-                    await accept_cookies_if_present(page)
-                return page, True
-        except Exception:
-            continue
+                sub_btn = new_page.locator(sub_sel).first
+                if await sub_btn.is_visible(timeout=1000):
+                    await sub_btn.click()
+                    await new_page.wait_for_load_state("domcontentloaded", timeout=12000)
+                    await new_page.wait_for_timeout(800)
+                    break
+            except Exception:
+                continue
+        return new_page
+
+    # Scan main page and iframes for the Apply trigger
+    search_contexts = [page, *[f for f in page.frames if f != page.main_frame]]
+    for ctx in search_contexts:
+        for sel in selectors:
+            try:
+                loc = ctx.locator(sel).first
+                if not await loc.is_visible(timeout=1000):
+                    continue
+
+                initial_url = page.url
+                before_pages = list(page.context.pages)
+                try:
+                    async with page.expect_popup(timeout=6000) as popup_info:
+                        await loc.click()
+                    new_page = await popup_info.value
+                    return await _handle_new_page(new_page), True
+                except PlaywrightTimeout:
+                    await page.wait_for_timeout(1200)
+                    # Check if a new tab opened in context.pages outside expect_popup
+                    new_tabs = [p for p in page.context.pages if p not in before_pages and not p.is_closed()]
+                    if new_tabs:
+                        return await _handle_new_page(new_tabs[-1]), True
+                    if page.url != initial_url:
+                        await accept_cookies_if_present(page)
+                    return page, True
+            except Exception:
+                continue
     return page, False
 
 
@@ -496,6 +720,23 @@ async def get_form_root(page: Page):
     return page
 
 
+async def get_form_roots(page: Page) -> List[Tuple[Any, Any]]:
+    """Return list of `(doc_ctx, form_root)` covering active modal/page and all iframes."""
+    roots: List[Tuple[Any, Any]] = []
+    main_root = await get_form_root(page)
+    roots.append((page, main_root))
+    if main_root is page:
+        for frame in page.frames:
+            if frame == page.main_frame:
+                continue
+            try:
+                if await frame.locator("input, select, textarea, button, [role='button'], [role='radio']").count() > 0:
+                    roots.append((frame, frame))
+            except Exception:
+                continue
+    return roots
+
+
 async def fill_matching_fields(page: Page, answers: Dict[str, str]) -> List[str]:
     field_rules = [
         (["prénom", "prenom", "first name", "firstname", "first_name", "fname"], answers["prenom"]),
@@ -513,25 +754,25 @@ async def fill_matching_fields(page: Page, answers: Dict[str, str]) -> List[str]
     ]
 
     filled: List[str] = []
-    root = await get_form_root(page)
-    inputs = root.locator("input:visible, textarea:visible")
-    count = await inputs.count()
-    for i in range(count):
-        el = inputs.nth(i)
-        try:
-            itype = (await el.get_attribute("type") or "text").lower()
-            if itype in {"hidden", "file", "submit", "button", "checkbox", "radio", "search"}:
+    for doc_ctx, root in await get_form_roots(page):
+        inputs = root.locator("input:visible, textarea:visible")
+        count = await inputs.count()
+        for i in range(count):
+            el = inputs.nth(i)
+            try:
+                itype = (await el.get_attribute("type") or "text").lower()
+                if itype in {"hidden", "file", "submit", "button", "checkbox", "radio", "search"}:
+                    continue
+                if (await el.input_value() or "").strip():
+                    continue
+                hint = await get_label_text(doc_ctx, el)
+                for patterns, value in field_rules:
+                    if any(p in hint for p in patterns):
+                        await el.fill(value)
+                        filled.append(f"{patterns[0]} -> {value}")
+                        break
+            except Exception:
                 continue
-            if (await el.input_value() or "").strip():
-                continue
-            hint = await get_label_text(page, el)
-            for patterns, value in field_rules:
-                if any(p in hint for p in patterns):
-                    await el.fill(value)
-                    filled.append(f"{patterns[0]} -> {value}")
-                    break
-        except Exception:
-            continue
     return filled
 
 
@@ -599,6 +840,93 @@ async def try_fill_date_or_calendar(page: Page, el, is_end: bool) -> Optional[st
     return None
 
 
+async def extract_radio_options(doc_ctx: Any, fs: Any) -> List[Tuple[str, Any]]:
+    """Extract `(option_text, clickable_locator)` for all radio options inside a fieldset/radiogroup."""
+    results: List[Tuple[str, Any]] = []
+    seen_texts: Set[str] = set()
+
+    # 1. Inspect every radio input, ARIA radio, and LinkedIn custom radio option container
+    candidates = await fs.locator("input[type='radio'], [role='radio'], .fb-text-selectable__option").all()
+    for el in candidates:
+        try:
+            text = ""
+            click_target = el
+            tag = (await el.evaluate("e => e.tagName.toLowerCase()") or "")
+            cls = (await el.get_attribute("class") or "")
+
+            if "fb-text-selectable__option" in cls:
+                lbl = el.locator("label").first
+                if await lbl.count() > 0:
+                    text = re.sub(r"\s+", " ", await lbl.inner_text()).strip()
+                    click_target = lbl
+                if not text:
+                    text = re.sub(r"\s+", " ", await el.inner_text()).strip()
+            elif tag == "input":
+                el_id = await el.get_attribute("id")
+                if el_id:
+                    lbl = doc_ctx.locator(f"label[for='{el_id}']").first
+                    if await lbl.count() > 0:
+                        text = re.sub(r"\s+", " ", await lbl.inner_text()).strip()
+                        click_target = lbl
+                if not text:
+                    wrap = el.locator("xpath=ancestor::label[1]").first
+                    if await wrap.count() > 0:
+                        text = re.sub(r"\s+", " ", await wrap.inner_text()).strip()
+                        click_target = wrap
+                if not text:
+                    sib_txt = await el.evaluate(
+                        """e => {
+                            let nxt = e.nextSibling;
+                            while (nxt) {
+                                const t = (nxt.textContent || '').trim();
+                                if (t) return t;
+                                nxt = nxt.nextSibling;
+                            }
+                            if (e.parentElement) {
+                                return (e.parentElement.innerText || '').trim();
+                            }
+                            return '';
+                        }"""
+                    )
+                    text = re.sub(r"\s+", " ", sib_txt or "").strip()
+                    if text and await el.is_visible():
+                        click_target = el
+                if not text:
+                    text = (await el.get_attribute("aria-label") or await el.get_attribute("value") or "").strip()
+            else:
+                text = re.sub(r"\s+", " ", await el.inner_text()).strip()
+                if not text:
+                    text = (await el.get_attribute("aria-label") or "").strip()
+                if not text:
+                    lbl_by = await el.get_attribute("aria-labelledby")
+                    if lbl_by:
+                        parts = []
+                        for ref_id in lbl_by.split():
+                            ref = doc_ctx.locator(f"#{ref_id}").first
+                            if await ref.count() > 0:
+                                parts.append((await ref.inner_text()).strip())
+                        text = re.sub(r"\s+", " ", " ".join(parts)).strip()
+
+            if text and text.lower() not in seen_texts:
+                seen_texts.add(text.lower())
+                results.append((text, click_target))
+        except Exception:
+            continue
+
+    # 2. Fallback: visible labels inside the fieldset
+    if not results:
+        for lbl in await fs.locator("label:visible").all():
+            try:
+                text = re.sub(r"\s+", " ", await lbl.inner_text()).strip()
+                if text and text.lower() not in seen_texts:
+                    seen_texts.add(text.lower())
+                    results.append((text, lbl))
+            except Exception:
+                continue
+
+    return results
+
+
 async def answer_common_questions(
     page: Page,
     answers: Dict[str, str],
@@ -617,7 +945,27 @@ async def answer_common_questions(
     saved_answers = load_saved_unanswered_answers()
     custom_rules = load_custom_rules()
     answered: List[str] = []
-    root = await get_form_root(page)
+    form_roots = await get_form_roots(page)
+    for doc_ctx, root in form_roots:
+        await _answer_common_questions_in_root(
+            page, doc_ctx, root, answers, verified_skills,
+            seen_unanswered, step_unanswered, saved_answers, custom_rules, answered,
+        )
+    return answered
+
+
+async def _answer_common_questions_in_root(
+    page: Page,
+    doc_ctx: Any,
+    root: Any,
+    answers: Dict[str, str],
+    verified_skills: Set[str],
+    seen_unanswered: Set[str],
+    step_unanswered: List[str],
+    saved_answers: Dict[str, str],
+    custom_rules: List[Dict[str, str]],
+    answered: List[str],
+) -> None:
 
     # 1. Text & numeric inputs
     try:
@@ -630,8 +978,10 @@ async def answer_common_questions(
                     continue
                 if (await el.input_value() or "").strip():
                     continue
-                q = await get_label_text(page, el)
-                if "search" in q and "job" not in q:
+                q = await get_label_text(doc_ctx, el)
+                if ("search" in q and "job" not in q) or any(
+                    skip in q for skip in ("mots clés", "mots-clés", "rechercher")
+                ):
                     continue
                 is_num = itype == "number" or "numeric" in (await el.get_attribute("inputmode") or "")
 
@@ -642,13 +992,32 @@ async def answer_common_questions(
                     val = "École 42 Paris / IUT d'Orsay"
                 elif "description" in q:
                     val = "Développement C/C++/TypeScript, systèmes Linux, Docker, SQL, réseaux et sécurité (projets Webserv, Transcendence, Chaski-Booking)."
-                elif any(k in q for k in ("message au recruteur", "motivations", "message personnalisé", "pourquoi ce poste", "cover letter", "lettre de motivation")):
+                elif any(
+                    k in q
+                    for k in (
+                        "message au recruteur",
+                        "motivations",
+                        "message personnalisé",
+                        "pourquoi ce poste",
+                        "expliquez-nous pourquoi",
+                        "souhaitez nous rejoindre",
+                        "pourquoi voulez-vous",
+                        "cover letter",
+                        "coverletter",
+                        "motivationletter",
+                        "lettre de motivation",
+                    )
+                ):
                     val = (
                         f"Bonjour, étudiant en {answers.get('formation', 'BUT 2 Informatique')} ({answers.get('ecole', 'IUT d\'Orsay')}) et à l'École 42 Paris, "
                         f"je recherche un stage de {answers.get('disponibilite', '3 mois du 03/05 au 16/07')}. "
                         f"Opérationnel en C/C++, TypeScript, Linux, Docker et SQL, je serais ravi de rejoindre votre équipe. "
                         f"Cordialement, {answers.get('nom_complet', 'Santiago FUENTES LLANOS')}."
                     )
+                elif any(k in q for k in ("code postal", "postal code", "zip")):
+                    val = "91440"
+                elif any(k in q for k in ("adresse électronique", "e-mail", "email")):
+                    val = answers.get("email", "")
                 elif any(k in q for k in ("année", "années", "years", "combien d'exp", "how long", "how many years")):
                     val = "1"
                 elif any(k in q for k in ("durée", "duration", "combien de mois", "months")):
@@ -665,30 +1034,46 @@ async def answer_common_questions(
                         continue
                 elif any(k in q for k in ("salaire", "rémunération", "gratification", "salary", "compensation")):
                     val = "800" if is_num else "Gratification légale"
-                elif any(k in q for k in ("ville", "city", "localisation")):
-                    val = answers.get("ville", "Bures-sur-Yvette")
+                elif any(k in q for k in ("ville", "city", "localisation", "londres, paris", "paris, new york", "location")):
+                    val = f"{answers.get('ville', 'Bures-sur-Yvette')}, France"
                 elif is_num:
                     val = "1"
 
                 if not val:
-                    human_q = await get_human_question_text(page, el)
+                    human_q = await get_human_question_text(doc_ctx, el)
                     saved_val = saved_answers.get(human_q.lower(), "") if human_q else ""
                     if not saved_val:
                         saved_val = match_custom_rule(human_q or q, custom_rules)
                     if saved_val:
                         val = saved_val
 
+                if not val:
+                    human_q = await get_human_question_text(doc_ctx, el)
+                    is_req = (
+                        (await el.get_attribute("required") is not None)
+                        or ((await el.get_attribute("aria-required") or "").lower() == "true")
+                        or ("*" in (human_q or ""))
+                    )
+                    if human_q and is_req:
+                        llm_val = ask_llm_for_field("input", human_q, [], answers, verified_skills)
+                        if llm_val:
+                            val = llm_val
+
                 if val:
                     await el.fill(val)
                     answered.append(f"input -> {val[:30]}")
                 else:
-                    human_q = await get_human_question_text(page, el)
-                    if human_q:
+                    human_q = await get_human_question_text(doc_ctx, el)
+                    is_req = (
+                        (await el.get_attribute("required") is not None)
+                        or ((await el.get_attribute("aria-required") or "").lower() == "true")
+                        or ("*" in (human_q or ""))
+                    )
+                    if human_q and is_req:
                         step_unanswered.append(human_q)
                         if human_q not in seen_unanswered:
                             seen_unanswered.add(human_q)
-                            print(f"  [?] Unanswered input: {human_q}")
-                            log_unanswered_question("input", human_q, [], company=company, url=url)
+                            print(f"  [?] Unanswered required input: {human_q}")
             except Exception:
                 continue
     except Exception:
@@ -703,11 +1088,14 @@ async def answer_common_questions(
                 cur = (await sel.input_value() or "").strip()
                 if cur and cur.lower() not in {"select an option", "sélectionner une option", ""}:
                     continue
-                q = await get_label_text(page, sel)
+                q = await get_label_text(doc_ctx, sel)
                 opts = [await o.inner_text() for o in await sel.locator("option").all()]
                 opts = [o.strip() for o in opts if o.strip()]
-                clean_opts = [o for o in opts if o.lower() not in {"select an option", "sélectionner une option", "choisir...", "--"}]
-                human_q = await get_human_question_text(page, sel)
+                clean_opts = [
+                    o for o in opts
+                    if o.lower() not in {"select an option", "sélectionner une option", "veuillez sélectionner", "please select", "choisir...", "--"}
+                ]
+                human_q = await get_human_question_text(doc_ctx, sel)
                 saved_val = saved_answers.get(human_q.lower(), "") if human_q else ""
                 if not saved_val:
                     saved_val = match_custom_rule(human_q or q, custom_rules)
@@ -716,29 +1104,50 @@ async def answer_common_questions(
                 if saved_val:
                     matched_opt = next((o for o in clean_opts if saved_val.lower() in o.lower()), None)
                 if not matched_opt:
-                    yn = classify_yes_no_question(q, verified_skills)
-                    if yn == ("Non", "No"):
-                        targets = ("Non", "No")
+                    if any(k in q for k in ("département", "departement")):
+                        targets: Tuple[str, ...] = ("Essonne",)
+                    elif any(k in q for k in ("appareil téléphonique", "phone device", "type de téléphone")):
+                        targets = ("Mobile", "Cell")
+                    elif any(k in q for k in ("entendu parler", "hear about", "connu")):
+                        targets = ("Job Board", "Site d'emploi", "Website", "Site web", "LinkedIn")
                     else:
-                        targets = (
-                            "Oui", "Yes", "France (+33)", "C1", "Courant", "Fluent",
-                            "B2", "Intermédiaire", "Bac+2", "Bac +2", "BUT 2",
-                            "1 an", "Moins d'un an", "3 mois",
-                        )
+                        yn = classify_yes_no_question(q, verified_skills)
+                        if yn == ("Non", "No"):
+                            targets = ("Non", "No")
+                        else:
+                            targets = (
+                                "Oui", "Yes", "France (+33)", "C1", "Courant", "Fluent",
+                                "B2", "Intermédiaire", "Bac+2", "Bac +2", "BUT 2",
+                                "1 an", "Moins d'un an", "3 mois",
+                            )
                     for target in targets:
                         matched_opt = next((o for o in clean_opts if target.lower() in o.lower()), None)
                         if matched_opt:
                             break
 
+                if not matched_opt and human_q:
+                    is_req = (
+                        (await sel.get_attribute("required") is not None)
+                        or ((await sel.get_attribute("aria-required") or "").lower() == "true")
+                        or ("*" in human_q)
+                    )
+                    if is_req and clean_opts:
+                        matched_opt = ask_llm_for_field("select", human_q, clean_opts, answers, verified_skills) or None
+
                 if matched_opt:
                     await sel.select_option(label=matched_opt)
                     answered.append(f"select -> {matched_opt}")
-                elif human_q:
-                    step_unanswered.append(human_q)
-                    if human_q not in seen_unanswered:
-                        seen_unanswered.add(human_q)
-                        print(f"  [?] Unanswered select: {human_q} | Options: {clean_opts}")
-                        log_unanswered_question("select", human_q, clean_opts, company=company, url=url)
+                elif human_q and clean_opts:
+                    is_req = (
+                        (await sel.get_attribute("required") is not None)
+                        or ((await sel.get_attribute("aria-required") or "").lower() == "true")
+                        or ("*" in human_q)
+                    )
+                    if is_req:
+                        step_unanswered.append(human_q)
+                        if human_q not in seen_unanswered:
+                            seen_unanswered.add(human_q)
+                            print(f"  [?] Unanswered required select: {human_q} | Options: {clean_opts}")
             except Exception:
                 continue
     except Exception:
@@ -750,52 +1159,81 @@ async def answer_common_questions(
         for i in range(await fieldsets.count()):
             fs = fieldsets.nth(i)
             try:
+                if await fs.locator("input[type='radio'], [role='radio'], .fb-text-selectable__option").count() == 0:
+                    continue
                 if await fs.locator("input[type='radio']:checked, [role='radio'][aria-checked='true']").count() > 0:
                     continue
-                all_labels = await fs.locator("label:visible, [role='radio']:visible").all()
-                option_texts = [re.sub(r"\s+", " ", await lbl.inner_text()).strip() for lbl in all_labels]
-                option_texts = [o for o in option_texts if o]
-                human_q = await get_human_question_text(page, fs, exclude_texts=option_texts)
+                opt_pairs = await extract_radio_options(doc_ctx, fs)
+                option_texts = [t for t, _ in opt_pairs]
+                human_q = await get_human_question_text(doc_ctx, fs, exclude_texts=option_texts)
                 legend = (human_q + " " + (await fs.inner_text())).lower()
 
                 saved_val = saved_answers.get(human_q.lower(), "") if human_q else ""
                 if not saved_val:
                     saved_val = match_custom_rule(human_q or legend, custom_rules)
                 choices: Optional[Tuple[str, ...]] = (saved_val,) if saved_val else classify_yes_no_question(legend, verified_skills)
+
+                # Mandatory GDPR/privacy/contact-consent radios (e.g. Pretto Privacy Policy *)
+                is_privacy_consent = any(
+                    k in legend
+                    for k in (
+                        "privacy policy", "privacy notice", "politique de confidentialit",
+                        "rgpd", "gdpr", "allowing", "contact me", "me contacter",
+                        "données personnelles", "personal data", "consent", "j'accepte", "i agree",
+                    )
+                )
+                if not choices and is_privacy_consent:
+                    choices = ("Oui", "Yes", "J'accepte", "I agree", "Accept", "Accepter")
+
+                if not choices and human_q and option_texts:
+                    llm_choice = ask_llm_for_field("radio", human_q, option_texts, answers, verified_skills)
+                    if llm_choice:
+                        choices = (llm_choice,)
                 if not choices:
                     if human_q:
                         step_unanswered.append(human_q)
                         if human_q not in seen_unanswered:
                             seen_unanswered.add(human_q)
                             print(f"  [?] Unanswered radio: {human_q} | Options: {option_texts}")
-                            log_unanswered_question("radio", human_q, option_texts, company=company, url=url)
                     continue
 
                 clicked_radio = False
                 for lbl_txt in choices:
                     target_l = lbl_txt.lower()
-                    for lbl in all_labels:
-                        txt = (await lbl.inner_text()).strip().lower()
-                        if txt == target_l or txt.startswith(f"{target_l} ") or txt.startswith(f"{target_l},"):
-                            await lbl.click()
-                            answered.append(f"radio -> {lbl_txt}")
+                    for opt_txt, opt_el in opt_pairs:
+                        txt = opt_txt.strip().lower()
+                        if txt == target_l or txt.startswith(f"{target_l} ") or txt.startswith(f"{target_l},") or (is_privacy_consent and target_l in txt):
+                            try:
+                                await opt_el.click(force=True)
+                            except Exception:
+                                await opt_el.check(force=True)
+                            answered.append(f"radio -> {opt_txt[:40]}")
                             clicked_radio = True
                             break
                     if clicked_radio:
                         break
                     lbl = fs.locator(f"label:has-text('{lbl_txt}')").first
                     if await lbl.count() > 0 and await lbl.is_visible(timeout=300):
-                        await lbl.click()
+                        await lbl.click(force=True)
                         answered.append(f"radio -> {lbl_txt}")
+                        clicked_radio = True
                         break
+                # Single-option required privacy/consent radio fallback
+                if not clicked_radio and is_privacy_consent and len(opt_pairs) == 1:
+                    opt_txt, opt_el = opt_pairs[0]
+                    try:
+                        await opt_el.click(force=True)
+                    except Exception:
+                        await opt_el.check(force=True)
+                    answered.append(f"radio -> {opt_txt[:40]}")
             except Exception:
                 continue
     except Exception:
         pass
 
-    # 4. Checkboxes & Consent Toggles (<input type="checkbox"> and role="checkbox")
+    # 4. Checkboxes & Consent Toggles (<input type="checkbox"> and role="checkbox", including sr-only styled inputs)
     try:
-        cbs = root.locator("input[type='checkbox']:visible, [role='checkbox']:visible")
+        cbs = root.locator("input[type='checkbox'], [role='checkbox']:visible")
         for i in range(await cbs.count()):
             cb = cbs.nth(i)
             try:
@@ -812,8 +1250,10 @@ async def answer_common_questions(
                 if is_checked:
                     continue
 
-                human_q = await get_human_question_text(page, cb)
-                q_low = (human_q + " " + await get_label_text(page, cb)).lower()
+                human_q = await get_human_question_text(doc_ctx, cb)
+                q_low = (human_q + " " + await get_label_text(doc_ctx, cb)).lower()
+                cb_name = (await cb.get_attribute("name") or "").lower()
+                is_visible = await cb.is_visible()
                 is_required = (
                     await cb.get_attribute("required") is not None
                     or await cb.get_attribute("aria-required") == "true"
@@ -821,16 +1261,25 @@ async def answer_common_questions(
                 )
                 is_marketing = any(
                     k in q_low
-                    for k in ("newsletter", "marketing", "promotion", "offres commerciales", "partenaires", "actualités", "publicité")
+                    for k in (
+                        "newsletter", "marketing", "promotion", "offres commerciales", "partenaires",
+                        "actualités", "publicité", "alertes par email", "alerte emploi",
+                        "receive email alerts", "rester connecté", "stay signed in",
+                        "se souvenir de moi", "remember me",
+                    )
                 )
                 is_legal = any(
-                    k in q_low
+                    k in f"{q_low} {cb_name}"
                     for k in (
                         "accepte", "j'accepte", "conditions", "politique", "confidentialité",
                         "rgpd", "gdpr", "privacy", "terms", "certifie", "exactitude",
                         "exact", "lu et approuvé", "consent", "autorise le traitement",
+                        "données personnelles", "traitement de mes données", "cadre de ma candidature",
                     )
                 )
+                # Ignore hidden non-legal checkboxes (e.g. off-screen filters)
+                if not is_visible and not is_legal and not is_required:
+                    continue
                 saved_val = saved_answers.get(human_q.lower(), "").lower() if human_q else ""
                 if not saved_val:
                     saved_val = match_custom_rule(human_q or q_low, custom_rules).lower()
@@ -838,26 +1287,23 @@ async def answer_common_questions(
 
                 if saved_val in {"checked", "oui", "yes", "true", "1"} or is_legal or (is_required and not is_marketing) or (yn_cb == ("Oui", "Yes") and not is_marketing):
                     if role_attr == "checkbox":
-                        await cb.click()
+                        await cb.click(force=True)
                     else:
                         await cb.check(force=True)
-                    answered.append(f"checkbox -> checked ({human_q[:40]})")
+                    answered.append(f"checkbox -> checked ({(human_q or cb_name)[:40]})")
                 elif is_marketing and not is_required:
                     continue
                 elif saved_val in {"unchecked", "non", "no", "false", "0"}:
                     continue
-                elif human_q:
+                elif human_q and is_required:
                     step_unanswered.append(human_q)
                     if human_q not in seen_unanswered:
                         seen_unanswered.add(human_q)
-                        print(f"  [?] Unanswered checkbox: {human_q} | Options: ['checked', 'unchecked']")
-                        log_unanswered_question("checkbox", human_q, ["checked", "unchecked"], company=company, url=url)
+                        print(f"  [?] Unanswered required checkbox: {human_q}")
             except Exception:
                 continue
     except Exception:
         pass
-
-    return answered
 
 
 async def inject_files(page: Page, cv_pdf: Path, lm_pdf: Path) -> List[str]:
@@ -949,6 +1395,8 @@ async def uncheck_follow_company(page: Page) -> None:
 
 async def find_submit_button(page: Page):
     sub_selectors = [
+        "button[data-cy='submitButton']",
+        "button[data-testid='apply-form-submit']",
         "button[aria-label*='Envoyer la candidature' i]",
         "button[aria-label*='Submit application' i]",
         "button:has-text('Envoyer la candidature')",
@@ -957,19 +1405,41 @@ async def find_submit_button(page: Page):
         "button:has-text('Je postule')",
         "button:has-text('Postuler maintenant')",
         "button:has-text('Submit application')",
+        "#postuler button[type='submit']:visible",
         "button:has-text('Envoyer')",
+        "a[role='button']:has-text('Envoyer')",
+        "button:has-text('Valider')",
+        "a[role='button']:has-text('Valider')",
         "button:has-text('Soumettre')",
         "button:has-text('Submit')",
+        "a[role='button']:has-text('Submit')",
+        "input[type='submit']:visible",
         "form button[type='submit']:visible",
-        "form input[type='submit']:visible",
+        "button:has-text('Postuler')",
+        "a[role='button']:has-text('Postuler')",
     ]
-    for sel in sub_selectors:
-        try:
-            btn = page.locator(sel).first
-            if await btn.is_visible(timeout=600) and await btn.is_enabled():
-                return btn
-        except Exception:
-            continue
+    bad_tokens = (
+        "rechercher", "search", "connexion", "connecter", "login", "sign in",
+        "créer un compte", "alerte", "alert", "newsletter", "annuler", "cancel",
+        "cookie", "refuser", "fermer", "close",
+    )
+    for _, ctx in await get_form_roots(page):
+        for sel in sub_selectors:
+            try:
+                btns = await ctx.locator(sel).all()
+                for btn in btns[:8]:
+                    if not (await btn.is_visible(timeout=350) and await btn.is_enabled()):
+                        continue
+                    lbl = " ".join([
+                        (await btn.inner_text() if await btn.evaluate("e => e.tagName !== 'INPUT'") else ""),
+                        (await btn.get_attribute("value") or ""),
+                        (await btn.get_attribute("aria-label") or ""),
+                    ]).lower()
+                    if any(bad in lbl for bad in bad_tokens):
+                        continue
+                    return btn
+            except Exception:
+                continue
     return None
 
 
@@ -980,30 +1450,179 @@ async def try_click_next_step(page: Page) -> bool:
         "button[aria-label*='next step' i]",
         "button[aria-label*='Vérifier' i]",
         "button[aria-label*='Review' i]",
+        "button:has-text('Save and Continue')",
+        "button:has-text('Enregistrer et continuer')",
         "button:has-text('Suivant')",
+        "a[role='button']:has-text('Suivant')",
         "button:has-text('Vérifier')",
         "button:has-text('Continuer')",
+        "a[role='button']:has-text('Continuer')",
+        "button:has-text('Continue')",
+        "a[role='button']:has-text('Continue')",
         "button:has-text('Next')",
+        "a[role='button']:has-text('Next')",
         "button:has-text('Review')",
+        "button:has-text('Valider')",
     ]
-    for sel in next_selectors:
-        try:
-            btn = page.locator(sel).first
-            if await btn.is_visible(timeout=700) and await btn.is_enabled():
-                await btn.click()
-                await page.wait_for_timeout(1000)
-                return True
-        except Exception:
-            continue
+    for _, ctx in await get_form_roots(page):
+        for sel in next_selectors:
+            try:
+                btn = ctx.locator(sel).first
+                if await btn.is_visible(timeout=500) and await btn.is_enabled():
+                    await btn.click()
+                    await page.wait_for_timeout(1000)
+                    return True
+            except Exception:
+                continue
     return False
 
 
-async def check_submission_confirmed(page: Page) -> bool:
+async def dump_visible_buttons(page: Page) -> List[str]:
+    """Return a concise list of visible button/submit labels across page and iframes for bailout diagnostics."""
+    labels: List[str] = []
+    seen: Set[str] = set()
+    for _, ctx in await get_form_roots(page):
+        try:
+            btns = await ctx.locator("button:visible, a[role='button']:visible, input[type='submit']:visible").all()
+            for btn in btns[:25]:
+                try:
+                    txt = (await btn.inner_text() if await btn.evaluate("e => e.tagName !== 'INPUT'") else (await btn.get_attribute("value") or ""))
+                    txt = re.sub(r"\s+", " ", txt or "").strip()
+                    if not txt:
+                        txt = (await btn.get_attribute("aria-label") or "").strip()
+                    if txt and txt.lower() not in seen:
+                        seen.add(txt.lower())
+                        labels.append(txt[:60])
+                except Exception:
+                    continue
+        except Exception:
+            continue
+    return labels[:15]
+
+
+async def collect_validation_errors(page: Page) -> List[str]:
+    """Inspect page & iframes for visible HTML5/CSS validation errors or empty required fields."""
+    errors: List[str] = []
+    seen: Set[str] = set()
+    for doc_ctx, root in await get_form_roots(page):
+        # 1. Explicit validation error banners/messages
+        err_sel = (
+            ".artdeco-inline-feedback--error:visible, "
+            ".invalid-feedback:visible, "
+            "[role='alert']:visible, "
+            ".error:visible, "
+            "[class*='error-message' i]:visible, "
+            "[class*='field-error' i]:visible"
+        )
+        try:
+            for el in (await root.locator(err_sel).all())[:10]:
+                txt = re.sub(r"\s+", " ", await el.inner_text()).strip()
+                if txt and len(txt) < 220 and txt.lower() not in seen:
+                    seen.add(txt.lower())
+                    errors.append(txt)
+        except Exception:
+            pass
+
+        # 2. Invalid or empty required inputs/selects
+        try:
+            inv_sel = "input[aria-invalid='true']:visible, select[aria-invalid='true']:visible, textarea[aria-invalid='true']:visible, input:invalid:visible, select:invalid:visible, textarea:invalid:visible"
+            for el in (await root.locator(inv_sel).all())[:8]:
+                q = await get_human_question_text(doc_ctx, el) or await get_label_text(doc_ctx, el)
+                msg = f"Invalid field: {q[:100]}" if q else "Invalid field"
+                if msg.lower() not in seen:
+                    seen.add(msg.lower())
+                    errors.append(msg)
+        except Exception:
+            pass
+    return errors[:8]
+
+
+async def get_step_signature(page: Page) -> str:
+    """Fingerprint the current form step (URL + modal heading + visible field labels) to detect stuck Next loops."""
+    parts: List[str] = [page.url]
+    try:
+        root = await get_form_root(page)
+        for h in (await root.locator("h1:visible, h2:visible, h3:visible, legend:visible, label:visible").all())[:12]:
+            txt = re.sub(r"\s+", " ", await h.inner_text()).strip()
+            if txt:
+                parts.append(txt[:80])
+    except Exception:
+        pass
+    return "|".join(parts)
+
+
+async def _has_visible_modal(page: Page) -> bool:
+    try:
+        modal = page.locator(".jobs-easy-apply-modal, div[role='dialog'][aria-modal='true']").first
+        return await modal.count() > 0 and await modal.is_visible(timeout=300)
+    except Exception:
+        return False
+
+
+async def save_debug_screenshot(page: Page, company: str, suffix: str = "after_submit") -> Optional[Path]:
+    try:
+        DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+        safe_comp = re.sub(r"[^\w\-]+", "_", company or "offer").strip("_")[:50] or "offer"
+        out_path = DEBUG_DIR / f"{safe_comp}_{suffix}.png"
+        await page.screenshot(path=str(out_path), full_page=True, timeout=6000)
+        return out_path
+    except Exception:
+        return None
+
+
+CONFIRMATION_URL_TOKENS = (
+    "origin=responseoffer",
+    "/bounce/createalert",
+    "/jobs/apply/confirm",
+    "/apply/confirm",
+    "/application/confirm",
+    "/confirmation",
+    "/thank-you",
+    "/thankyou",
+    "/merci",
+    "applied=true",
+    "submitted=true",
+)
+
+
+async def check_submission_confirmed(
+    page: Page,
+    pre_submit_url: str = "",
+    had_modal: bool = False,
+    submit_ok_responses: Optional[List[str]] = None,
+) -> bool:
     try:
         if page.is_closed():
             return False
-        body_text = (await page.locator("body").inner_text(timeout=600)).lower()
-        return any(phrase in body_text for phrase in CONFIRMATION_PHRASES)
+        u = (page.url or "").lower()
+        if any(tok in u for tok in CONFIRMATION_URL_TOKENS):
+            return True
+
+        # Check visible text in main page and iframes for confirmation phrases
+        for _, ctx in await get_form_roots(page):
+            try:
+                body_text = (await ctx.locator("body").inner_text(timeout=2000)).lower()
+                if any(phrase in body_text for phrase in CONFIRMATION_PHRASES):
+                    return True
+            except Exception:
+                continue
+
+        # Check if modal/drawer closed after submit with a 200/201 submit response (and no validation errors)
+        if had_modal and not await _has_visible_modal(page):
+            if submit_ok_responses:
+                return True
+            if not await collect_validation_errors(page):
+                # Check if post-submit LinkedIn/WTTJ toast appeared or Apply button turned into "Postulé"/"Applied"
+                body_low = (await page.locator("body").inner_text(timeout=1500)).lower()
+                if any(tok in body_low for tok in ("postulé", "applied", "candidature envoyée", "merci")):
+                    return True
+
+        # Check if URL redirected away from /apply form cleanly with a 200/201 submit response and no errors
+        if pre_submit_url and page.url != pre_submit_url and submit_ok_responses:
+            if not await collect_validation_errors(page):
+                return True
+
+        return False
     except Exception:
         return False
 
@@ -1021,9 +1640,10 @@ async def process_offer_concurrently(
     cv_pdf = Path(meta["cv_pdf"])
     lm_pdf = Path(meta["lm_pdf"])
 
-    print(f"[*] [{company}] Opening {url}")
+    nav_url = url.replace("https://fr.linkedin.com/jobs/view/", "https://www.linkedin.com/jobs/view/")
+    print(f"[*] [{company}] Opening {nav_url}")
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        await page.goto(nav_url, wait_until="domcontentloaded", timeout=45000)
         try:
             await page.wait_for_load_state("networkidle", timeout=5000)
         except Exception:
@@ -1033,6 +1653,14 @@ async def process_offer_concurrently(
         return page, "manual_portal"
 
     await page.wait_for_timeout(1200)
+    if any(k in page.url.lower() for k in ("authwall", "/login", "connexion", "signin", "se-connecter")):
+        print(f"[!] Bailout [{company}]: Login wall detected ({page.url}) — run './stage login'")
+        update_tracker_status(url, company, "needs_login")
+        return page, "needs_login"
+    if "linkedin.com/jobs/search" in page.url.lower() and "/jobs/view/" in nav_url.lower():
+        print(f"[!] Bailout [{company}]: LinkedIn offer expired/redirected to search results -> 'expired'")
+        update_tracker_status(url, company, "expired")
+        return page, "expired"
     await accept_cookies_if_present(page)
     active_page, clicked = await click_apply_and_follow_redirect(page)
     if active_page.is_closed():
@@ -1043,22 +1671,56 @@ async def process_offer_concurrently(
     print(f"[*] [{company}] Apply clicked: {clicked} | Target: {ats}")
 
     if not clicked:
-        print(f"[!] Bailout [{company}]: Apply button not found on page ({active_page.url})")
+        page_low = ""
+        try:
+            page_low = (await active_page.locator("body").inner_text(timeout=1500)).lower()
+        except Exception:
+            pass
+        if any(p in page_low for p in EXPIRED_OFFER_PHRASES):
+            print(f"[!] Bailout [{company}]: Offer appears closed/expired ({ats}) -> 'expired'")
+            update_tracker_status(url, company, "expired")
+            return active_page, "expired"
+        if any(k in active_page.url.lower() for k in ("authwall", "/login", "connexion", "signin", "se-connecter")) or (
+            ats == "APEC" and any(k in page_low for k in ("connectez-vous", "me connecter", "mon espace"))
+        ):
+            print(f"[!] Bailout [{company}]: Login wall detected ({ats}) -> 'needs_login'")
+            update_tracker_status(url, company, "needs_login")
+            return active_page, "needs_login"
+        vis_btns = await dump_visible_buttons(active_page)
+        print(f"[!] Bailout [{company}]: Apply button not found on page ({active_page.url}) | Visible buttons: {vis_btns}")
         if auto:
             update_tracker_status(url, company, "manual_portal")
         return active_page, "manual_portal"
 
-    if any(k in active_page.url.lower() for k in ("authwall", "/login", "connexion", "signin")):
-        print(f"[!] Bailout [{company}]: Login wall detected ({active_page.url})")
-        update_tracker_status(url, company, "manual_portal")
-        return active_page, "manual_portal"
+    body_low_check = ""
+    try:
+        body_low_check = (await active_page.locator("body").inner_text(timeout=1000)).lower()[:2000]
+    except Exception:
+        pass
+    if any(k in active_page.url.lower() for k in ("authwall", "/login", "connexion", "signin", "se-connecter")) or (
+        "vous avez déjà un compte" in body_low_check and "mot de passe" in body_low_check
+    ) or (ats == "APEC" and any(k in body_low_check for k in ("connectez-vous", "identifiant", "mot de passe"))):
+        print(f"[!] Bailout [{company}]: Login wall detected ({ats}) -> 'needs_login' — sign in via './stage login'")
+        update_tracker_status(url, company, "needs_login")
+        return active_page, "needs_login"
 
     verified_skills = load_master_profile_skills()
     seen_unanswered: Set[str] = set()
     last_step_unanswered: List[str] = []
     bailout_reason = ""
     final_status = "manual_portal"
-    for step in range(1, 9):
+    max_steps = 15
+
+    # Wait briefly for dynamic JS application forms to render before step 1
+    try:
+        await active_page.wait_for_selector(
+            "form, input:visible, select:visible, button[type='submit'], .jobs-easy-apply-modal, [role='dialog']",
+            timeout=4000,
+        )
+    except Exception:
+        pass
+
+    for step in range(1, max_steps + 1):
         if active_page.is_closed():
             bailout_reason = f"Tab closed mid-fill at step {step}"
             break
@@ -1097,19 +1759,79 @@ async def process_offer_concurrently(
             if submit_btn is not None:
                 await uncheck_follow_company(active_page)
                 if auto:
-                    await submit_btn.click()
-                    await active_page.wait_for_timeout(1500)
-                    update_tracker_status(url, company, "applied")
-                    print(f"[+] [{company}] Submitted -> 'applied'!")
-                    return active_page, "applied"
+                    if step_unanswered:
+                        bailout_reason = f"Blocked by unanswered required fields before submit: {step_unanswered}"
+                        break
+
+                    pre_submit_url = active_page.url
+                    had_modal = await _has_visible_modal(active_page)
+                    submit_ok_responses: List[str] = []
+
+                    def _on_response(resp) -> None:
+                        try:
+                            if resp.status in (200, 201, 202, 204) and resp.request.method in ("POST", "PUT", "PATCH"):
+                                r_url = (resp.url or "").lower()
+                                if any(k in r_url for k in ("apply", "application", "candidat", "submit", "postul", "response", "jobs")):
+                                    submit_ok_responses.append(f"{resp.status} {resp.url}")
+                        except Exception:
+                            pass
+
+                    active_page.on("response", _on_response)
+                    try:
+                        await submit_btn.click()
+                        confirmed = False
+                        val_errors: List[str] = []
+                        for _ in range(4):
+                            await active_page.wait_for_timeout(1500)
+                            if await check_submission_confirmed(
+                                active_page,
+                                pre_submit_url=pre_submit_url,
+                                had_modal=had_modal,
+                                submit_ok_responses=submit_ok_responses,
+                            ):
+                                confirmed = True
+                                break
+                            val_errors = await collect_validation_errors(active_page)
+                            if val_errors:
+                                break
+                    finally:
+                        try:
+                            active_page.remove_listener("response", _on_response)
+                        except Exception:
+                            pass
+
+                    if confirmed:
+                        update_tracker_status(url, company, "applied")
+                        print(f"[+] [{company}] Confirmed -> 'applied'!")
+                        return active_page, "applied"
+                    shot = await save_debug_screenshot(active_page, company, "after_submit")
+                    shot_note = f" | Screenshot: {shot.relative_to(WORKSPACE)}" if shot else ""
+                    if val_errors:
+                        bailout_reason = f"Blocked by form validation errors after submit ({ats}): {val_errors}{shot_note}"
+                    else:
+                        bailout_reason = f"Clicked submit but confirmation was not detected ({ats}){shot_note}"
+                    break
                 print(f"[*] [{company}] Ready for manual review.")
                 return active_page, "ready_for_review"
 
+            pre_sig = await get_step_signature(active_page)
             if not await try_click_next_step(active_page):
                 if step_unanswered:
                     bailout_reason = f"Blocked by unanswered required fields: {step_unanswered}"
                 else:
-                    bailout_reason = f"No Next/Submit button found at step {step} ({ats})"
+                    vis_btns = await dump_visible_buttons(active_page)
+                    bailout_reason = f"No Next/Submit button found at step {step} ({ats}) | Visible buttons: {vis_btns}"
+                break
+
+            post_sig = await get_step_signature(active_page)
+            if post_sig == pre_sig:
+                val_errors = await collect_validation_errors(active_page)
+                if val_errors:
+                    bailout_reason = f"Stuck on step {step} ({ats}) — validation errors: {val_errors}"
+                elif step_unanswered:
+                    bailout_reason = f"Stuck on step {step} ({ats}) — unanswered fields: {step_unanswered}"
+                else:
+                    bailout_reason = f"Stuck on step {step} ({ats}) — clicking Next did not advance modal"
                 break
         except Exception as e:
             bailout_reason = f"Step {step} error ({e})"
@@ -1119,7 +1841,7 @@ async def process_offer_concurrently(
         if last_step_unanswered:
             bailout_reason = f"Blocked by unanswered required fields: {last_step_unanswered}"
         else:
-            bailout_reason = f"Form did not reach Submit after 8 steps ({ats})"
+            bailout_reason = f"Form did not reach Submit after {max_steps} steps ({ats})"
 
     if not bailout_reason:
         bailout_reason = f"Form incomplete ({ats})"
@@ -1131,6 +1853,39 @@ async def process_offer_concurrently(
     return active_page, final_status
 
 
+def prepare_chrome_profile_dir(profile_dir: Path) -> bool:
+    """Clean stale Chromium Singleton locks; return False if an active process owns it."""
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    lock_file = profile_dir / "SingletonLock"
+    if lock_file.exists() or lock_file.is_symlink():
+        pid = None
+        try:
+            target = os.readlink(lock_file)
+            m = re.search(r"-(\d+)$", target)
+            if m:
+                pid = int(m.group(1))
+        except Exception:
+            pass
+        if pid is not None:
+            try:
+                os.kill(pid, 0)
+                print(f"[!] .chrome_profile/ is currently in use by PID {pid}. Close that Chrome window or stop the running task first.")
+                return False
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                print(f"[!] .chrome_profile/ is currently in use by PID {pid}. Close that Chrome window or stop the running task first.")
+                return False
+        for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            p = profile_dir / name
+            if p.exists() or p.is_symlink():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+    return True
+
+
 async def async_main() -> int:
     parser = argparse.ArgumentParser(description="Playwright Async Multi-Tab Application Assistant")
     parser.add_argument("--meta", help="Path to output/<Company>/metadata.json")
@@ -1140,32 +1895,65 @@ async def async_main() -> int:
     parser.add_argument("--auto", action="store_true", help="Auto-submit simple forms without pausing (runs headless by default)")
     parser.add_argument("--headed", action="store_true", help="Show the browser window even in --auto mode")
     parser.add_argument("--skip-external", action="store_true", help="Skip external ATS redirects")
-    parser.add_argument("--login", action="store_true", help="Open Chrome to log into LinkedIn & HelloWork")
+    parser.add_argument("--login", action="store_true", help="Open Chrome to log into all supported job boards (saves cookies)")
+    parser.add_argument(
+        "--sources",
+        nargs="+",
+        choices=list(LOGIN_URLS.keys()),
+        default=list(LOGIN_URLS.keys()),
+        help="Job boards to open in --login mode (default: all)",
+    )
     args = parser.parse_args()
 
-    CHROME_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-    lock_file = CHROME_PROFILE_DIR / "SingletonLock"
-    if lock_file.exists() or lock_file.is_symlink():
-        try:
-            lock_file.unlink()
-        except Exception:
-            pass
+    if not prepare_chrome_profile_dir(CHROME_PROFILE_DIR):
+        return 1
 
     if args.login:
+        storage_state_path = CHROME_PROFILE_DIR / "storage_state.json"
         async with async_playwright() as p:
-            context = await p.chromium.launch_persistent_context(
-                user_data_dir=str(CHROME_PROFILE_DIR),
-                headless=False,
-                viewport={"width": 1280, "height": 860},
-            )
-            p1 = context.pages[0] if context.pages else await context.new_page()
-            await p1.goto("https://www.linkedin.com/login", wait_until="domcontentloaded")
-            p2 = await context.new_page()
-            await p2.goto("https://www.hellowork.com/fr-fr/candidat/connexion-inscription.html", wait_until="domcontentloaded")
-            print("[*] Log into LinkedIn and HelloWork, then close the Chrome window when done.")
+            login_kwargs: Dict[str, Any] = {
+                "user_data_dir": str(CHROME_PROFILE_DIR),
+                "headless": False,
+                "no_viewport": True,
+                "locale": "fr-FR",
+                "ignore_default_args": ["--enable-automation"],
+                "args": ["--disable-blink-features=AutomationControlled"],
+            }
+            if Path("/Applications/Google Chrome.app").exists():
+                login_kwargs["channel"] = "chrome"
+            context = await p.chromium.launch_persistent_context(**login_kwargs)
+            if storage_state_path.exists():
+                try:
+                    saved = json.loads(storage_state_path.read_text(encoding="utf-8"))
+                    if saved.get("cookies"):
+                        await context.add_cookies(saved["cookies"])
+                except Exception:
+                    pass
+            labels: List[str] = []
+            for idx, src_key in enumerate(args.sources):
+                label, login_url = LOGIN_URLS[src_key]
+                labels.append(label)
+                page = context.pages[0] if (idx == 0 and context.pages) else await context.new_page()
+                try:
+                    await page.goto(login_url, wait_until="domcontentloaded", timeout=20000)
+                except Exception as e:
+                    print(f"  [!] Could not open {label} ({login_url}): {e}")
+            print(f"[*] Opened login tabs for: {', '.join(labels)}.")
+            print("[*] Sign in on each tab so cookies are saved in .chrome_profile/, then close the Chrome window when done.")
+            ticks = 0
             try:
                 while len(context.pages) > 0:
                     await asyncio.sleep(0.5)
+                    ticks += 1
+                    if ticks % 6 == 0:
+                        try:
+                            await context.storage_state(path=str(storage_state_path))
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            try:
+                await context.storage_state(path=str(storage_state_path))
             except Exception:
                 pass
             await context.close()
@@ -1183,17 +1971,32 @@ async def async_main() -> int:
         "user_data_dir": str(CHROME_PROFILE_DIR),
         "headless": run_headless,
         "viewport": {"width": 1280, "height": 860},
+        "locale": "fr-FR",
+        "ignore_default_args": ["--enable-automation"],
         "args": ["--disable-blink-features=AutomationControlled"],
     }
     if run_headless:
         launch_kwargs["channel"] = "chromium"
         launch_kwargs["user_agent"] = (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/159.0.0.0 Safari/537.36"
         )
 
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(**launch_kwargs)
+        storage_state_path = CHROME_PROFILE_DIR / "storage_state.json"
+        if storage_state_path.exists():
+            try:
+                saved = json.loads(storage_state_path.read_text(encoding="utf-8"))
+                existing_keys = {(c.get("name"), c.get("domain")) for c in await context.cookies()}
+                missing = [
+                    c for c in saved.get("cookies", [])
+                    if (c.get("name"), c.get("domain")) not in existing_keys
+                ]
+                if missing:
+                    await context.add_cookies(missing)
+            except Exception:
+                pass
 
         max_workers = max(1, args.tabs)
         if args.auto and len(meta_paths) > 1:
@@ -1204,24 +2007,37 @@ async def async_main() -> int:
                 async with sem:
                     meta = load_json(mp)
                     u = meta.get("url", "")
+                    comp = meta.get("company", "Offer")
                     if not u:
                         return
                     pg = await context.new_page()
                     active_pg = pg
                     try:
-                        active_pg, _ = await process_offer_concurrently(
-                            pg, profile, meta, u, auto=True, skip_external=args.skip_external
+                        active_pg, _ = await asyncio.wait_for(
+                            process_offer_concurrently(
+                                pg, profile, meta, u, auto=True, skip_external=args.skip_external
+                            ),
+                            timeout=90,
                         )
+                    except asyncio.TimeoutError:
+                        print(f"[!] Bailout [{comp}]: Timed out after 90s -> 'manual_portal'")
+                        update_tracker_status(u, comp, "manual_portal")
+                    except Exception as e:
+                        print(f"[!] Bailout [{comp}]: Unexpected worker error ({e}) -> 'manual_portal'")
+                        update_tracker_status(u, comp, "manual_portal")
                     finally:
                         for tab_to_close in {pg, active_pg}:
                             if tab_to_close and not tab_to_close.is_closed() and len(context.pages) > 1:
                                 try:
-                                    await tab_to_close.close()
+                                    await asyncio.wait_for(tab_to_close.close(), timeout=5)
                                 except Exception:
                                     pass
 
             await asyncio.gather(*(worker_task(i, mp) for i, mp in enumerate(meta_paths)))
-            await context.close()
+            try:
+                await asyncio.wait_for(context.close(), timeout=15)
+            except Exception:
+                pass
             return 0
 
         for start in range(0, len(meta_paths), max_workers):

@@ -14,6 +14,7 @@ import html
 import json
 import mimetypes
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -68,6 +69,7 @@ def run_background_script(cmd: List[str], label: str) -> bool:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            start_new_session=True,
         )
         CURRENT_PROC = proc
         assert proc.stdout is not None
@@ -147,6 +149,8 @@ def generate_university_report() -> Path:
   .applied {{ background: #dcfce7; color: #166534; }}
   .drafted {{ background: #e0f2fe; color: #075985; }}
   .manual_portal {{ background: #fef3c7; color: #92400e; }}
+  .needs_login {{ background: #ede9fe; color: #5b21b6; }}
+  .expired {{ background: #fee2e2; color: #991b1b; }}
   .skipped {{ background: #f3f4f6; color: #4b5563; }}
   @media print {{ a {{ color: #111; text-decoration: none; }} }}
 </style>
@@ -204,7 +208,7 @@ class StageHandler(BaseHTTPRequestHandler):
             self.send_file(UI_DIR / "index.html")
         elif path == "/api/applications":
             rows = read_applications()
-            counts = {"total": len(rows), "applied": 0, "drafted": 0, "manual_portal": 0, "skipped": 0}
+            counts = {"total": len(rows), "applied": 0, "drafted": 0, "manual_portal": 0, "needs_login": 0, "expired": 0, "skipped": 0}
             for r in rows:
                 st = r.get("Status", "")
                 if st in counts:
@@ -312,7 +316,10 @@ class StageHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/stop":
             with LOG_LOCK:
                 if CURRENT_PROC is not None and CURRENT_PROC.poll() is None:
-                    CURRENT_PROC.terminate()
+                    try:
+                        os.killpg(os.getpgid(CURRENT_PROC.pid), signal.SIGTERM)
+                    except Exception:
+                        CURRENT_PROC.terminate()
                     LOG_LINES.append(f"[{datetime.now().strftime('%H:%M:%S')}] Stopped by user.")
                     self.send_json({"stopped": True})
                 else:
@@ -328,7 +335,7 @@ class StageHandler(BaseHTTPRequestHandler):
                 started = run_background_script(cmd, "Sync GitHub")
             elif action == "login":
                 cmd = [PYTHON_BIN, str(SCRIPTS_DIR / "apply_browser.py"), "--login"]
-                started = run_background_script(cmd, "Login Chrome (LinkedIn & HelloWork)")
+                started = run_background_script(cmd, "Login Chrome (All Job Boards)")
             elif action == "mail":
                 cmd = [PYTHON_BIN, str(SCRIPTS_DIR / "spontaneous_mail.py"), "--limit", limit]
                 started = run_background_script(cmd, "Spontaneous Local Emails")

@@ -44,8 +44,8 @@ case "$cmd" in
     exec "$PY" "$ROOT_DIR/scripts/sync_github.py" "$@"
     ;;
   login)
-    # Open persistent Chrome profile to log into LinkedIn & HelloWork once
-    exec "$PY" "$ROOT_DIR/scripts/apply_browser.py" --login
+    # Open persistent Chrome profile to log into all supported job boards (saves cookies)
+    exec "$PY" "$ROOT_DIR/scripts/apply_browser.py" --login "$@"
     ;;
   mail)
     # Find local tech companies near Bures-sur-Yvette/Saclay & create .eml drafts with CV+LM attached
@@ -70,7 +70,16 @@ rows = list(csv.DictReader(p.open(encoding='utf-8')))
 print(f'Total tracked offers: {len(rows)}')
 for i, r in enumerate(rows, 1):
     u = (r.get('URL') or '').lower()
-    src = 'LinkedIn' if 'linkedin.com' in u else ('HelloWork' if 'hellowork.com' in u else 'Other')
+    src = (
+        'LinkedIn' if 'linkedin.com' in u else
+        'HelloWork' if 'hellowork.com' in u else
+        'WTTJ' if 'welcometothejungle.com' in u else
+        'JobTeaser' if 'jobteaser.com' in u else
+        'Indeed' if 'indeed.com' in u else
+        'APEC' if 'apec.fr' in u else
+        'Meteojob' if 'meteojob.com' in u else
+        'Other'
+    )
     print(f\"{i:2d}. [{r['Status']:13s}] [{src:9s}] {r['Company']} — {r['Role']}\")
     print(f\"    {r['URL']}\")
 "
