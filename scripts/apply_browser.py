@@ -371,6 +371,28 @@ def find_submit_button(page: Page):
     return None
 
 
+def uncheck_follow_company(page: Page) -> None:
+    """Uncheck LinkedIn's pre-checked 'Follow <Company>' checkbox if present."""
+    selectors = [
+        "#follow-company-checkbox",
+        "input[id*='follow-company' i]",
+    ]
+    for sel in selectors:
+        try:
+            cb = page.locator(sel).first
+            if cb.count() > 0 and cb.is_checked():
+                # LinkedIn styles the checkbox with a clickable <label for="follow-company-checkbox">
+                lbl = page.locator("label[for='follow-company-checkbox']").first
+                if lbl.count() > 0 and lbl.is_visible(timeout=500):
+                    lbl.click()
+                else:
+                    cb.uncheck(force=True)
+                print("  [*] Unchecked 'Follow company' checkbox.")
+                return
+        except Exception:
+            continue
+
+
 def process_application_steps(
     page: Page,
     answers: Dict[str, str],
@@ -400,6 +422,7 @@ def process_application_steps(
 
         submit_btn = find_submit_button(page)
         if submit_btn is not None:
+            uncheck_follow_company(page)
             if auto_submit:
                 submit_btn.click()
                 page.wait_for_timeout(1800)
