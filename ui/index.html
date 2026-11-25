@@ -44,11 +44,11 @@
 <aside>
   <div class="brand">StageBot</div>
   <div class="sub" id="sidebar-sub">Loading...</div>
-  <button class="nav-btn active" id="nav-tracker" onclick="showTab('tracker', this)"></button>
+  <button class="nav-btn active" id="nav-guide" onclick="showTab('guide', this)"></button>
   <button class="nav-btn" id="nav-search" onclick="showTab('search', this)"></button>
+  <button class="nav-btn" id="nav-tracker" onclick="showTab('tracker', this)"></button>
   <button class="nav-btn" id="nav-preview" onclick="showTab('preview', this)"></button>
   <button class="nav-btn" id="nav-profile" onclick="showTab('profile', this)"></button>
-  <button class="nav-btn" id="nav-guide" onclick="showTab('guide', this)"></button>
   <div class="stats" id="stats-box">
     <div><span id="lbl-total">Total</span>: <strong id="st-total">0</strong></div>
     <div><span id="lbl-applied">Sent</span>: <strong id="st-applied">0</strong></div>
@@ -66,15 +66,12 @@
         <button class="lang-btn" id="lang-fr" onclick="setLang('fr')">FR</button>
         <button class="lang-btn" id="lang-en" onclick="setLang('en')">EN</button>
       </div>
-      <button class="secondary" id="btn-login" onclick="runLogin()">Login Chrome</button>
-      <a href="/api/report" target="_blank"><button class="secondary" id="btn-report"></button></a>
-      <button class="secondary" id="btn-refresh" onclick="loadApps()"></button>
     </div>
   </header>
 
   <div class="content">
     <!-- TRACKER TAB -->
-    <section id="tab-tracker">
+    <section id="tab-tracker" class="hidden">
       <div class="card row">
         <input id="filter-q" oninput="renderTable()" style="flex:1; min-width:220px;">
         <select id="filter-status" onchange="renderTable()">
@@ -84,6 +81,8 @@
           <option value="manual_portal">manual_portal</option>
           <option value="skipped">skipped</option>
         </select>
+        <button class="secondary" id="btn-refresh" onclick="loadApps()"></button>
+        <a href="/api/report" target="_blank"><button class="secondary" id="btn-report"></button></a>
       </div>
       <div class="card" style="padding: 8px 16px;">
         <table>
@@ -158,7 +157,7 @@
     </section>
 
     <!-- GUIDE / TUTORIAL TAB -->
-    <section id="tab-guide" class="hidden">
+    <section id="tab-guide">
       <div class="card">
         <h3 id="g-title" style="margin-top:0;"></h3>
         <p id="g-intro" style="color:var(--muted); margin-bottom:0;"></p>
@@ -198,7 +197,7 @@
 <script>
 const I18N = {
   fr: {
-    navTracker: "Candidatures", navSearch: "Chercher & Postuler", navPreview: "Aperçu CV & LM", navProfile: "Profil & GitHub", navGuide: "Guide / Démarrer",
+    navGuide: "1. Intro & Démarrer", navSearch: "2. Chercher & Postuler", navTracker: "3. Candidatures", navPreview: "4. Aperçu CV & LM", navProfile: "5. Profil & GitHub",
     total: "Total", applied: "Envoyés", drafted: "Brouillons", manual: "Portail",
     report: "Justificatif Université (IUT)", refresh: "Actualiser",
     filterPlaceholder: "Filtrer entreprise, poste, mot-clé...", allStatuses: "Tous les statuts",
@@ -230,7 +229,7 @@ const I18N = {
     titles: {tracker:"Suivi des Candidatures", search:"Chercher & Postuler", preview:"Aperçu CV & Lettre de Motivation", profile:"Profil & GitHub", guide:"Guide de Démarrage"}
   },
   es: {
-    navTracker: "Candidaturas", navSearch: "Buscar y Postular", navPreview: "Vista CV y Carta", navProfile: "Perfil y GitHub", navGuide: "Guía / Inicio",
+    navGuide: "1. Intro y Guía", navSearch: "2. Buscar y Postular", navTracker: "3. Candidaturas", navPreview: "4. Vista CV y Carta", navProfile: "5. Perfil y GitHub",
     total: "Total", applied: "Enviadas", drafted: "Borradores", manual: "Portal",
     report: "Justificante Universidad (IUT)", refresh: "Actualizar",
     filterPlaceholder: "Filtrar empresa, puesto, palabra clave...", allStatuses: "Todos los estados",
@@ -262,7 +261,7 @@ const I18N = {
     titles: {tracker:"Seguimiento de Candidaturas", search:"Buscar y Postular", preview:"Vista CV y Carta de Motivación", profile:"Perfil y GitHub", guide:"Guía de Inicio"}
   },
   en: {
-    navTracker: "Applications", navSearch: "Search & Apply", navPreview: "CV & Letter Preview", navProfile: "Profile & GitHub", navGuide: "Guide / Start",
+    navGuide: "1. Intro & Guide", navSearch: "2. Search & Apply", navTracker: "3. Applications", navPreview: "4. CV & Letter Preview", navProfile: "5. Profile & GitHub",
     total: "Total", applied: "Applied", drafted: "Drafts", manual: "Portal",
     report: "University Proof Report", refresh: "Refresh",
     filterPlaceholder: "Filter company, role, keyword...", allStatuses: "All statuses",
@@ -296,7 +295,7 @@ const I18N = {
 };
 
 let currentLang = localStorage.getItem('stagebot_lang') || 'fr';
-let currentTab = 'tracker';
+let currentTab = 'guide';
 let allRows = [];
 
 function setLang(lang) {
