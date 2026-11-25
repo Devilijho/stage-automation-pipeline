@@ -292,7 +292,7 @@ def try_auto_submit(page: Page) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Playwright Browser Application Assistant")
-    parser.add_argument("--meta", required=True, help="Path to output/<Company>/metadata.json")
+    parser.add_argument("--meta", help="Path to output/<Company>/metadata.json")
     parser.add_argument("--url", default="", help="Override job URL")
     parser.add_argument("--auto", action="store_true", help="Auto-submit simple forms without pausing")
     parser.add_argument(
@@ -300,7 +300,46 @@ def main() -> int:
         action="store_true",
         help="Automatically mark external ATS redirects as manual_portal and close without pausing",
     )
+    parser.add_argument(
+        "--login",
+        action="store_true",
+        help="Open persistent Chrome profile to LinkedIn & HelloWork login pages and save session",
+    )
     args = parser.parse_args()
+
+    CHROME_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    # Remove stale SingletonLock if a previous Chrome crashed
+    lock_file = CHROME_PROFILE_DIR / "SingletonLock"
+    if lock_file.exists() or lock_file.is_symlink():
+        try:
+            lock_file.unlink()
+        except Exception:
+            pass
+
+    if args.login:
+        with sync_playwright() as p:
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=str(CHROME_PROFILE_DIR),
+                headless=False,
+                viewport={"width": 1280, "height": 860},
+            )
+            p1 = context.pages[0] if context.pages else context.new_page()
+            p1.goto("https://www.linkedin.com/login", wait_until="domcontentloaded")
+            p2 = context.new_page()
+            p2.goto("https://www.hellowork.com/fr-fr/candidat/connexion-inscription.html", wait_until="domcontentloaded")
+            print("[*] Log into LinkedIn and HelloWork in the Chrome tabs, then close the Chrome window when done.")
+            try:
+                while len(context.pages) > 0:
+                    context.pages[0].wait_for_timeout(500)
+            except Exception:
+                pass
+            context.close()
+        print("[+] Browser session saved in .chrome_profile/.")
+        return 0
+
+    if not args.meta:
+        print("[!] --meta is required unless --login is used.")
+        return 1
 
     profile = load_json(PROFILE_PATH)
     meta = load_json(Path(args.meta))
@@ -311,14 +350,6 @@ def main() -> int:
 
     cv_pdf = Path(meta["cv_pdf"])
     lm_pdf = Path(meta["lm_pdf"])
-    CHROME_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-    # Remove stale SingletonLock if a previous Chrome crashed
-    lock_file = CHROME_PROFILE_DIR / "SingletonLock"
-    if lock_file.exists() or lock_file.is_symlink():
-        try:
-            lock_file.unlink()
-        except Exception:
-            pass
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
@@ -345,6 +376,12 @@ def main() -> int:
 
         ats = detect_ats_provider(active_page.url)
         print(f"[*] Apply clicked: {clicked} | Active target: {ats} ({active_page.url})")
+
+        if any(k in active_page.url.lower() for k in ("authwall", "/login", "connexion", "signin")):
+            print("[!] Login wall detected! Click 'Login Chrome' in the UI (or run './stage login') once to save your session.")
+            update_tracker_status(url, meta["company"], "manual_portal")
+            context.close()
+            return 0
 
         try:
             filled = fill_matching_fields(active_page, profile["form_answers"])

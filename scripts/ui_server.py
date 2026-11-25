@@ -255,6 +255,9 @@ class StageHandler(BaseHTTPRequestHandler):
             if action == "sync":
                 cmd = [PYTHON_BIN, str(SCRIPTS_DIR / "sync_github.py")]
                 started = run_background_script(cmd, "Sync GitHub")
+            elif action == "login":
+                cmd = [PYTHON_BIN, str(SCRIPTS_DIR / "apply_browser.py"), "--login"]
+                started = run_background_script(cmd, "Login Chrome (LinkedIn & HelloWork)")
             elif action == "open":
                 cv_pdf = body.get("cv_pdf", "")
                 offer_url = body.get("url", "")

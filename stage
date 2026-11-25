@@ -43,6 +43,10 @@ case "$cmd" in
     # Re-index GitHub repos into config/master_profile.md
     exec "$PY" "$ROOT_DIR/scripts/sync_github.py" "$@"
     ;;
+  login)
+    # Open persistent Chrome profile to log into LinkedIn & HelloWork once
+    exec "$PY" "$ROOT_DIR/scripts/apply_browser.py" --login
+    ;;
   ui)
     # Launch the macOS StageBot Web UI
     exec "$PY" "$ROOT_DIR/scripts/ui_server.py" "$@"
