@@ -127,6 +127,23 @@ def click_apply_and_follow_redirect(
                 new_page.wait_for_load_state("domcontentloaded", timeout=15000)
                 new_page.wait_for_timeout(1200)
                 accept_cookies_if_present(new_page)
+                # Some ATS landing pages (e.g. Lever) open the job description first and require clicking "Apply for this job"
+                for sub_sel in [
+                    "a:has-text('Apply for this job')",
+                    "a:has-text('Postuler à ce poste')",
+                    "button:has-text('Apply for this job')",
+                    "button:has-text('Postuler à ce poste')",
+                    "a.postings-btn[href*='/apply']",
+                ]:
+                    try:
+                        sub_btn = new_page.locator(sub_sel).first
+                        if sub_btn.is_visible(timeout=1200):
+                            sub_btn.click()
+                            new_page.wait_for_load_state("domcontentloaded", timeout=12000)
+                            new_page.wait_for_timeout(1000)
+                            break
+                    except Exception:
+                        continue
                 return new_page, True
             except PlaywrightTimeout:
                 page.wait_for_timeout(1500)
@@ -210,20 +227,32 @@ def inject_files(page: Page, cv_pdf: Path, lm_pdf: Path) -> List[str]:
                         el.get_attribute("name"),
                         el.get_attribute("id"),
                         el.get_attribute("aria-label"),
+                        el.get_attribute("data-qa"),
+                        el.get_attribute("class"),
                     ],
                 )
             ).lower()
+            el_id = el.get_attribute("id")
+            if el_id:
+                lbl = page.locator(f"label[for='{el_id}']").first
+                if lbl.count() > 0:
+                    hint += " " + lbl.inner_text().lower()
+
             if any(k in hint for k in ["lettre", "motivation", "cover", "lm"]):
                 el.set_input_files(str(lm_pdf))
+                el.dispatch_event("change")
                 attached.append(f"LM -> {lm_pdf.name}")
             elif any(k in hint for k in ["cv", "resume", "curriculum"]):
                 el.set_input_files(str(cv_pdf))
+                el.dispatch_event("change")
                 attached.append(f"CV -> {cv_pdf.name}")
             elif i == 0:
                 el.set_input_files(str(cv_pdf))
+                el.dispatch_event("change")
                 attached.append(f"CV (slot 0) -> {cv_pdf.name}")
             elif i == 1:
                 el.set_input_files(str(lm_pdf))
+                el.dispatch_event("change")
                 attached.append(f"LM (slot 1) -> {lm_pdf.name}")
         except Exception:
             continue
