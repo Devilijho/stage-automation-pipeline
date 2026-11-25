@@ -636,9 +636,66 @@ def process_application_steps(
     return all_filled, all_attached, "manual_portal"
 
 
+def run_single_offer_on_page(
+    context: BrowserContext,
+    page: Page,
+    profile: Dict[str, Any],
+    meta: Dict[str, Any],
+    url: str,
+    auto: bool,
+    skip_external: bool,
+) -> Tuple[Page, str]:
+    """Process one offer on a given page; returns (active_page, status_or_state)."""
+    cv_pdf = Path(meta["cv_pdf"])
+    lm_pdf = Path(meta["lm_pdf"])
+
+    print(f"\n[*] [{meta['company']}] Opening {url} ...")
+    page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_timeout(1000)
+
+    cookies_closed = accept_cookies_if_present(page)
+    print(f"[*] [{meta['company']}] Cookie banner dismissed: {cookies_closed}")
+
+    active_page, clicked = click_apply_and_follow_redirect(context, page)
+    if active_page.is_closed() and context.pages:
+        active_page = context.pages[-1]
+    if active_page.is_closed():
+        return active_page, "closed"
+
+    ats = detect_ats_provider(active_page.url)
+    print(f"[*] [{meta['company']}] Apply clicked: {clicked} | Target: {ats}")
+
+    if any(k in active_page.url.lower() for k in ("authwall", "/login", "connexion", "signin")):
+        print(f"[!] [{meta['company']}] Login wall detected! Run Login Chrome once.")
+        update_tracker_status(url, meta["company"], "manual_portal")
+        return active_page, "manual_portal"
+
+    try:
+        filled, attached, wizard_status = process_application_steps(
+            active_page, profile["form_answers"], cv_pdf, lm_pdf, auto_submit=auto
+        )
+    except Exception as e:
+        print(f"[!] [{meta['company']}] Form auto-fill interrupted ({e}).")
+        filled, attached, wizard_status = [], [], "manual_portal"
+
+    is_external = ats not in {"LinkedIn", "HelloWork", "Welcome to the Jungle"}
+    if skip_external and is_external and (len(filled) == 0 and len(attached) == 0):
+        print(f"[*] [{meta['company']}] External portal ({ats}) -> marking 'manual_portal' and skipping.")
+        update_tracker_status(url, meta["company"], "manual_portal")
+        return active_page, "manual_portal"
+
+    print(f"[*] [{meta['company']}] Filled: {len(filled)} | Attached: {', '.join(attached) if attached else 'None'}")
+    if auto:
+        update_tracker_status(url, meta["company"], wizard_status)
+        print(f"[+] [{meta['company']}] Status: '{wizard_status}'")
+    return active_page, wizard_status
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Playwright Browser Application Assistant")
     parser.add_argument("--meta", help="Path to output/<Company>/metadata.json")
+    parser.add_argument("--metas", nargs="+", help="Multiple metadata.json paths to process in 1 Chrome window")
+    parser.add_argument("--tabs", type=int, default=3, help="Concurrent tabs per batch in --metas mode")
     parser.add_argument("--url", default="", help="Override job URL")
     parser.add_argument("--auto", action="store_true", help="Auto-submit simple forms without pausing")
     parser.add_argument(
@@ -654,7 +711,6 @@ def main() -> int:
     args = parser.parse_args()
 
     CHROME_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-    # Remove stale SingletonLock if a previous Chrome crashed
     lock_file = CHROME_PROFILE_DIR / "SingletonLock"
     if lock_file.exists() or lock_file.is_symlink():
         try:
@@ -683,19 +739,16 @@ def main() -> int:
         print("[+] Browser session saved in .chrome_profile/.")
         return 0
 
-    if not args.meta:
-        print("[!] --meta is required unless --login is used.")
+    meta_paths: List[Path] = []
+    if args.metas:
+        meta_paths = [Path(m) for m in args.metas]
+    elif args.meta:
+        meta_paths = [Path(args.meta)]
+    else:
+        print("[!] --meta or --metas is required unless --login is used.")
         return 1
 
     profile = load_json(PROFILE_PATH)
-    meta = load_json(Path(args.meta))
-    url = args.url or meta.get("url")
-    if not url:
-        print("[!] No URL found in metadata.json. Pass --url <job_url>.")
-        return 1
-
-    cv_pdf = Path(meta["cv_pdf"])
-    lm_pdf = Path(meta["lm_pdf"])
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
@@ -703,96 +756,95 @@ def main() -> int:
             headless=False,
             viewport={"width": 1280, "height": 860},
         )
+
+        # Multi-tab batch mode inside 1 persistent Chrome window
+        if len(meta_paths) > 1:
+            batch_size = max(1, args.tabs)
+            for start in range(0, len(meta_paths), batch_size):
+                chunk = meta_paths[start : start + batch_size]
+                print(f"\n=== Opening batch of {len(chunk)} tab(s) ({start + 1}-{start + len(chunk)}/{len(meta_paths)}) ===")
+                opened_tabs: List[Tuple[Page, Dict[str, Any], str]] = []
+                for idx_in_chunk, mp in enumerate(chunk):
+                    meta = load_json(mp)
+                    u = meta.get("url", "")
+                    if not u:
+                        continue
+                    pg = context.pages[0] if (idx_in_chunk == 0 and context.pages) else context.new_page()
+                    active_pg, st = run_single_offer_on_page(
+                        context, pg, profile, meta, u, auto=args.auto, skip_external=args.skip_external
+                    )
+                    if args.auto and not active_pg.is_closed() and len(context.pages) > 1:
+                        try:
+                            active_pg.close()
+                        except Exception:
+                            pass
+                    elif not args.auto and not active_pg.is_closed():
+                        opened_tabs.append((active_pg, meta, u))
+
+                if not args.auto and opened_tabs:
+                    print(f"[*] {len(opened_tabs)} tab(s) ready for your manual review. Submit & close tabs when done.")
+                    confirmed_urls = set()
+                    try:
+                        while any(not pg.is_closed() for pg, _, _ in opened_tabs):
+                            for pg, meta, u in opened_tabs:
+                                if u not in confirmed_urls and check_submission_confirmed(pg):
+                                    confirmed_urls.add(u)
+                                    update_tracker_status(u, meta["company"], "applied")
+                                    print(f"[+] Confirmed submission for {meta['company']}! Marked 'applied'.")
+                            if context.pages:
+                                context.pages[0].wait_for_timeout(500)
+                            else:
+                                break
+                    except Exception:
+                        pass
+            context.close()
+            return 0
+
+        # Single offer mode
+        meta = load_json(meta_paths[0])
+        url = args.url or meta.get("url")
+        if not url:
+            print("[!] No URL found in metadata.json. Pass --url <job_url>.")
+            context.close()
+            return 1
+
         page = context.pages[0] if context.pages else context.new_page()
-        print(f"[*] Opening {url} ...")
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(1200)
-
-        cookies_closed = accept_cookies_if_present(page)
-        print(f"[*] Cookie banner dismissed: {cookies_closed}")
-
-        active_page, clicked = click_apply_and_follow_redirect(context, page)
-        if active_page.is_closed() and context.pages:
-            active_page = context.pages[-1]
-
-        if active_page.is_closed():
-            print("[*] Browser tab was closed by user.")
-            context.close()
-            return 0
-
-        ats = detect_ats_provider(active_page.url)
-        print(f"[*] Apply clicked: {clicked} | Active target: {ats} ({active_page.url})")
-
-        if any(k in active_page.url.lower() for k in ("authwall", "/login", "connexion", "signin")):
-            print("[!] Login wall detected! Click 'Login Chrome' in the UI (or run './stage login') once to save your session.")
-            update_tracker_status(url, meta["company"], "manual_portal")
-            context.close()
-            return 0
-
-        try:
-            filled, attached, wizard_status = process_application_steps(
-                active_page, profile["form_answers"], cv_pdf, lm_pdf, auto_submit=args.auto
-            )
-        except Exception as e:
-            print(f"[!] Form auto-fill interrupted ({e}); keeping browser open if still active.")
-            filled, attached, wizard_status = [], [], "manual_portal"
-
-        is_external = ats not in {"LinkedIn", "HelloWork", "Welcome to the Jungle"}
-        if args.skip_external and is_external and (len(filled) == 0 and len(attached) == 0):
-            print(f"[*] External portal ({ats}) requires manual registration/fill -> marking 'manual_portal' and skipping.")
-            update_tracker_status(url, meta["company"], "manual_portal")
-            context.close()
-            return 0
-
-        print("\n" + "=" * 56)
-        print("HUMAN-IN-THE-LOOP GATE — VERIFY BEFORE SUBMITTING")
-        print("=" * 56)
-        print(f"Company          : {meta['company']}")
-        print(f"Role             : {meta['role']}")
-        print(f"Target ATS       : {ats}")
-        print(f"New CV Title     : {meta['cv_title']}")
-        print(f"Selected Projects: {', '.join(meta['selected_projects'])}")
-        print(f"Matched Keywords : {', '.join(meta['matched_keywords'])}")
-        print(f"Auto-filled      : {len(filled)} fields")
-        print(f"Files Attached   : {', '.join(attached) if attached else 'None (attach manually if needed)'}")
-        print(f"CV PDF           : {cv_pdf}")
-        print(f"LM PDF           : {lm_pdf}")
-        print("-" * 56)
-        if args.auto:
-            update_tracker_status(url, meta["company"], wizard_status)
-            print(f"[+] Auto-mode finished with status: '{wizard_status}'.")
-        elif not sys.stdin.isatty():
-            print("[*] UI mode: Chrome is open. Review & submit manually, then close Chrome (auto-detecting confirmation).")
-            confirmed = False
-            try:
-                while len(context.pages) > 0:
-                    for p_open in list(context.pages):
-                        if not confirmed and check_submission_confirmed(p_open):
-                            confirmed = True
-                            update_tracker_status(url, meta["company"], "applied")
-                            print("[+] Confirmed submission on page! Updated status to 'applied'.")
-                    context.pages[0].wait_for_timeout(500)
-            except Exception:
-                pass
-            if not confirmed:
-                print("[*] Window closed without confirmation; status left unchanged.")
-        else:
-            print("Review the browser form and click 'Envoyer' manually.")
-            try:
-                status_choice = input(
-                    "After submitting (or if redirected to external portal), type status [applied / manual_portal / skipped]: "
-                ).strip().lower()
-            except EOFError:
-                status_choice = ""
-            if status_choice in {"a", "applied"}:
-                status_choice = "applied"
-            elif status_choice in {"m", "manual_portal"}:
-                status_choice = "manual_portal"
-            elif status_choice in {"s", "skip", "skipped"}:
-                status_choice = "skipped"
-            if status_choice in {"applied", "manual_portal", "skipped", "drafted"}:
-                update_tracker_status(url, meta["company"], status_choice)
-                print(f"[+] Updated applications.csv status to '{status_choice}'.")
+        active_page, wizard_status = run_single_offer_on_page(
+            context, page, profile, meta, url, auto=args.auto, skip_external=args.skip_external
+        )
+        if not args.auto and not active_page.is_closed():
+            if not sys.stdin.isatty():
+                print("[*] UI mode: Chrome is open. Review & submit manually, then close Chrome (auto-detecting confirmation).")
+                confirmed = False
+                try:
+                    while len(context.pages) > 0:
+                        for p_open in list(context.pages):
+                            if not confirmed and check_submission_confirmed(p_open):
+                                confirmed = True
+                                update_tracker_status(url, meta["company"], "applied")
+                                print("[+] Confirmed submission on page! Updated status to 'applied'.")
+                        context.pages[0].wait_for_timeout(500)
+                except Exception:
+                    pass
+                if not confirmed:
+                    print("[*] Window closed without confirmation; status left unchanged.")
+            else:
+                print("Review the browser form and click 'Envoyer' manually.")
+                try:
+                    status_choice = input(
+                        "After submitting (or if redirected to external portal), type status [applied / manual_portal / skipped]: "
+                    ).strip().lower()
+                except EOFError:
+                    status_choice = ""
+                if status_choice in {"a", "applied"}:
+                    status_choice = "applied"
+                elif status_choice in {"m", "manual_portal"}:
+                    status_choice = "manual_portal"
+                elif status_choice in {"s", "skip", "skipped"}:
+                    status_choice = "skipped"
+                if status_choice in {"applied", "manual_portal", "skipped", "drafted"}:
+                    update_tracker_status(url, meta["company"], status_choice)
+                    print(f"[+] Updated applications.csv status to '{status_choice}'.")
         context.close()
 
     return 0

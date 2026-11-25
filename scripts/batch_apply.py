@@ -404,26 +404,23 @@ def main() -> int:
 
     print("\n" + "=" * 60)
     mode_label = "AUTO-SUBMIT" if args.auto else "MANUAL-REVIEW"
-    print(f"STARTING {mode_label} BROWSER QUEUE ({len(queue_metas)} OFFERS)")
+    print(f"STARTING {mode_label} BROWSER QUEUE ({len(queue_metas)} OFFERS IN 1 CHROME WINDOW)")
     print("=" * 60)
-    for idx, meta_path in enumerate(queue_metas, 1):
-        print(f"\n--- Offer {idx}/{len(queue_metas)}: {meta_path.parent.name} ---")
-        cmd = [PYTHON_BIN, str(SCRIPTS_DIR / "apply_browser.py"), "--meta", str(meta_path)]
-        if args.auto:
-            cmd.append("--auto")
-        if args.skip_external:
-            cmd.append("--skip-external")
-        res = subprocess.run(cmd, cwd=str(WORKSPACE))
-        if res.returncode != 0:
-            print("[!] apply_browser.py exited with non-zero status.")
-        if not args.auto and sys.stdin.isatty():
-            try:
-                cont = input("Press [Enter] for next offer, or type 'q' to stop queue: ").strip().lower()
-                if cont == "q":
-                    print("[*] Queue paused. Remaining tailored offers are saved in output/ and data/applications.csv.")
-                    break
-            except EOFError:
-                pass
+    cmd = [
+        PYTHON_BIN,
+        str(SCRIPTS_DIR / "apply_browser.py"),
+        "--metas",
+        *[str(mp) for mp in queue_metas],
+        "--tabs",
+        "3",
+    ]
+    if args.auto:
+        cmd.append("--auto")
+    if args.skip_external:
+        cmd.append("--skip-external")
+    res = subprocess.run(cmd, cwd=str(WORKSPACE))
+    if res.returncode != 0:
+        print("[!] apply_browser.py exited with non-zero status.")
 
     return 0
 
