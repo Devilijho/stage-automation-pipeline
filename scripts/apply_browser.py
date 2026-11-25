@@ -206,10 +206,16 @@ async def get_label_text(page: Page, el) -> str:
             pass
     try:
         parent_lbl = el.locator(
-            "xpath=ancestor::div[contains(@class,'fb-dash-form-element') or contains(@class,'jobs-easy-apply-form-element')][1]"
+            "xpath=ancestor-or-self::div[contains(@class,'fb-dash-form-element') or contains(@class,'jobs-easy-apply-form-element')][1]"
         ).first
         if await parent_lbl.count() > 0:
             parts.append(await parent_lbl.inner_text())
+    except Exception:
+        pass
+    try:
+        prev = el.locator("xpath=preceding-sibling::*[1]").first
+        if await prev.count() > 0:
+            parts.append(await prev.inner_text())
     except Exception:
         pass
     return " ".join(parts).lower()
@@ -227,11 +233,11 @@ async def get_form_root(page: Page):
 
 async def fill_matching_fields(page: Page, answers: Dict[str, str]) -> List[str]:
     field_rules = [
-        (["prénom", "prenom", "first name", "firstname", "first_name"], answers["prenom"]),
-        (["nom", "last name", "lastname", "last_name", "surname"], answers["nom"]),
+        (["prénom", "prenom", "first name", "firstname", "first_name", "fname"], answers["prenom"]),
+        (["nom", "last name", "lastname", "last_name", "lname", "surname"], answers["nom"]),
         (["full name", "nom complet"], answers["nom_complet"]),
         (["e-mail", "email", "courriel", "mail"], answers["email"]),
-        (["téléphone", "telephone", "phone", "mobile", "tel"], answers["telephone"]),
+        (["téléphone", "telephone", "phone", "mobile", "tel", "06 ", "07 "], answers["telephone"]),
         (["ville", "city", "localisation", "location"], answers["ville"]),
         (["école", "ecole", "school", "université", "university"], answers["ecole"]),
         (["niveau", "level", "études", "diplôme"], answers["niveau"]),
@@ -291,7 +297,7 @@ async def answer_common_questions(page: Page, answers: Dict[str, str]) -> List[s
                     val = "École 42 Paris / IUT d'Orsay"
                 elif "description" in q:
                     val = "Développement C/C++/TypeScript, systèmes Linux, Docker, SQL, réseaux et sécurité (projets Webserv, Transcendence, Chaski-Booking)."
-                elif any(k in q for k in ("message au recruteur", "motivations", "message personnalisé", "pourquoi ce poste")):
+                elif any(k in q for k in ("message au recruteur", "motivations", "message personnalisé", "pourquoi ce poste", "cover letter", "lettre de motivation")):
                     val = (
                         f"Bonjour, étudiant en {answers.get('formation', 'BUT 2 Informatique')} ({answers.get('ecole', 'IUT d\'Orsay')}) et à l'École 42 Paris, "
                         f"je recherche un stage de {answers.get('disponibilite', '3 mois du 03/05 au 16/07')}. "
@@ -674,9 +680,37 @@ async def async_main() -> int:
             viewport={"width": 1280, "height": 860},
         )
 
-        batch_size = max(1, args.tabs)
-        for start in range(0, len(meta_paths), batch_size):
-            chunk = meta_paths[start : start + batch_size]
+        max_workers = max(1, args.tabs)
+        if args.auto and len(meta_paths) > 1:
+            print(f"\n=== Running {len(meta_paths)} offer(s) with {max_workers}-slot rolling worker pool ===")
+            sem = asyncio.Semaphore(max_workers)
+
+            async def worker_task(idx: int, mp: Path) -> None:
+                async with sem:
+                    meta = load_json(mp)
+                    u = meta.get("url", "")
+                    if not u:
+                        return
+                    pg = await context.new_page()
+                    active_pg = pg
+                    try:
+                        active_pg, _ = await process_offer_concurrently(
+                            pg, profile, meta, u, auto=True, skip_external=args.skip_external
+                        )
+                    finally:
+                        for tab_to_close in {pg, active_pg}:
+                            if tab_to_close and not tab_to_close.is_closed() and len(context.pages) > 1:
+                                try:
+                                    await tab_to_close.close()
+                                except Exception:
+                                    pass
+
+            await asyncio.gather(*(worker_task(i, mp) for i, mp in enumerate(meta_paths)))
+            await context.close()
+            return 0
+
+        for start in range(0, len(meta_paths), max_workers):
+            chunk = meta_paths[start : start + max_workers]
             print(f"\n=== Running {len(chunk)} tab(s) SIMULTANEOUSLY ({start + 1}-{start + len(chunk)}/{len(meta_paths)}) ===")
 
             tasks = []
