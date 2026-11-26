@@ -5,7 +5,7 @@ import asyncio
 import json
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from playwright.async_api import Page, async_playwright
 
@@ -56,8 +56,14 @@ def load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def update_tracker_status(url: str, company: str, new_status: str, force: bool = False) -> None:
-    update_application_status(url, new_status, company=company, force=force)
+def update_tracker_status(
+    url: str,
+    company: str,
+    new_status: str,
+    force: bool = False,
+    notes: Optional[str] = None,
+) -> None:
+    update_application_status(url, new_status, company=company, force=force, notes=notes)
 
 
 async def process_offer_concurrently(
@@ -88,11 +94,11 @@ async def process_offer_concurrently(
     await page.wait_for_timeout(1200)
     if any(k in page.url.lower() for k in ("authwall", "/login", "connexion", "signin", "se-connecter")):
         print(f"[!] Bailout [{company}]: Login wall detected ({page.url}) — run './stage login'")
-        update_tracker_status(url, company, "needs_login")
+        update_tracker_status(url, company, "needs_login", notes=f"Login wall ({detect_ats_provider(page.url)})")
         return page, "needs_login"
     if "linkedin.com/jobs/search" in page.url.lower() and "/jobs/view/" in nav_url.lower():
         print(f"[!] Bailout [{company}]: LinkedIn offer expired/redirected to search results -> 'expired'")
-        update_tracker_status(url, company, "expired")
+        update_tracker_status(url, company, "expired", notes="Offer expired/redirected to search")
         return page, "expired"
     await accept_cookies_if_present(page)
     active_page, clicked = await click_apply_and_follow_redirect(page)
@@ -105,7 +111,7 @@ async def process_offer_concurrently(
 
     if "linkedin.com/jobs/search" in active_page.url.lower() and "/jobs/view/" in nav_url.lower():
         print(f"[!] Bailout [{company}]: LinkedIn offer expired/redirected to search results -> 'expired'")
-        update_tracker_status(url, company, "expired")
+        update_tracker_status(url, company, "expired", notes="Offer expired/redirected to search")
         return active_page, "expired"
 
     if ats == "LinkedIn" and "linkedin.com/jobs/view" in active_page.url.lower() and not await _has_visible_modal(active_page):
@@ -127,7 +133,7 @@ async def process_offer_concurrently(
             pass
         if any(p in page_low for p in EXPIRED_OFFER_PHRASES):
             print(f"[!] Bailout [{company}]: Offer appears closed/expired ({ats}) -> 'expired'")
-            update_tracker_status(url, company, "expired")
+            update_tracker_status(url, company, "expired", notes=f"Offer closed/expired ({ats})")
             return active_page, "expired"
         has_pwd_input = False
         try:
@@ -142,12 +148,12 @@ async def process_offer_concurrently(
             and any(k in page_low for k in ("connectez-vous", "me connecter", "se connecter", "identifiant"))
         ):
             print(f"[!] Bailout [{company}]: Login wall detected ({ats}) -> 'needs_login'")
-            update_tracker_status(url, company, "needs_login")
+            update_tracker_status(url, company, "needs_login", notes=f"Login wall ({ats})")
             return active_page, "needs_login"
         vis_btns = await dump_visible_buttons(active_page)
         print(f"[!] Bailout [{company}]: Apply button not found on page ({active_page.url}) | Visible buttons: {vis_btns}")
         if auto:
-            update_tracker_status(url, company, "manual_portal")
+            update_tracker_status(url, company, "manual_portal", notes=f"Apply button not found ({ats})")
         return active_page, "manual_portal"
 
     body_low_check = ""
@@ -170,7 +176,7 @@ async def process_offer_concurrently(
         and any(k in body_low_check for k in ("connectez-vous", "identifiant", "me connecter", "se connecter"))
     ):
         print(f"[!] Bailout [{company}]: Login wall detected ({ats}) -> 'needs_login' — sign in via './stage login'")
-        update_tracker_status(url, company, "needs_login")
+        update_tracker_status(url, company, "needs_login", notes=f"Login/account wall ({ats})")
         return active_page, "needs_login"
 
     verified_skills = load_master_profile_skills()
@@ -226,7 +232,7 @@ async def process_offer_concurrently(
             }
             if step == 1 and skip_external and is_external:
                 print(f"[!] Bailout [{company}]: Skipped external ATS ({ats}: {active_page.url})")
-                update_tracker_status(url, company, "manual_portal")
+                update_tracker_status(url, company, "manual_portal", notes=f"Skipped external ATS ({ats})")
                 return active_page, "manual_portal"
 
             submit_btn = await find_submit_button(active_page)
@@ -275,7 +281,7 @@ async def process_offer_concurrently(
                             pass
 
                     if confirmed:
-                        update_tracker_status(url, company, "applied")
+                        update_tracker_status(url, company, "applied", notes="")
                         print(f"[+] [{company}] Confirmed -> 'applied'!")
                         return active_page, "applied"
                     shot = await save_debug_screenshot(active_page, company, "after_submit")
@@ -292,7 +298,7 @@ async def process_offer_concurrently(
             if not await try_click_next_step(active_page):
                 if step > 1 and ats == "LinkedIn" and not await _has_visible_modal(active_page):
                     if await check_submission_confirmed(active_page, had_modal=True):
-                        update_tracker_status(url, company, "applied")
+                        update_tracker_status(url, company, "applied", notes="")
                         print(f"[+] [{company}] Confirmed -> 'applied'!")
                         return active_page, "applied"
                 if step_unanswered:
@@ -335,7 +341,7 @@ async def process_offer_concurrently(
 
     if auto:
         print(f"[!] Bailout [{company}]: {bailout_reason}")
-        update_tracker_status(url, company, final_status)
+        update_tracker_status(url, company, final_status, notes=bailout_reason[:300])
         print(f"[*] [{company}] Finished -> '{final_status}'")
     return active_page, final_status
 
@@ -401,11 +407,11 @@ async def _run_auto_pool(
             except asyncio.TimeoutError:
                 _log.warning("[%s] Worker timed out after 90s", comp)
                 print(f"[!] Bailout [{comp}]: Timed out after 90s -> 'manual_portal'")
-                update_tracker_status(u, comp, "manual_portal")
+                update_tracker_status(u, comp, "manual_portal", notes="Timed out after 90s")
             except Exception as e:
                 _log.exception("[%s] Unexpected worker error: %s", comp, e)
                 print(f"[!] Bailout [{comp}]: Unexpected worker error ({e}) -> 'manual_portal'")
-                update_tracker_status(u, comp, "manual_portal")
+                update_tracker_status(u, comp, "manual_portal", notes=f"Worker error: {str(e)[:200]}")
             finally:
                 for tab_to_close in {pg, active_pg}:
                     if tab_to_close and not tab_to_close.is_closed() and len(context.pages) > 1:
@@ -510,7 +516,13 @@ async def _run_manual_review(
                         except Exception:
                             pass
                         if action in {"skipped", "applied"}:
-                            update_tracker_status(u, meta.get("company", ""), action, force=True)
+                            update_tracker_status(
+                                u,
+                                meta.get("company", ""),
+                                action,
+                                force=True,
+                                notes="" if action == "applied" else "Skipped from UI",
+                            )
                             print(f"[*] [{meta.get('company', '')}] Marked '{action}' from UI — advancing...")
                         try:
                             await active_pg.close()
@@ -519,7 +531,7 @@ async def _run_manual_review(
                         break
                     if not confirmed_here and await check_submission_confirmed(active_pg):
                         confirmed_here = True
-                        update_tracker_status(u, meta.get("company", ""), "applied")
+                        update_tracker_status(u, meta.get("company", ""), "applied", notes="")
                         print(f"[+] Confirmed submission for {meta.get('company', '')}! Marked 'applied'.")
                     await asyncio.sleep(0.5)
             except Exception:

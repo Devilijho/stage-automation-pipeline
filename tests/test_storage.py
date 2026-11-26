@@ -87,16 +87,29 @@ class StorageTests(unittest.TestCase):
             self.assertTrue(
                 update_application_status(
                     "https://www.hellowork.com/fr-fr/emplois/123.html",
-                    "applied",
+                    "manual_portal",
                     force=False,
+                    notes="Stuck on step 2",
                     path=csv_path,
                 )
             )
+            self.assertEqual(read_applications(csv_path)[0]["Notes"], "Stuck on step 2")
+            self.assertTrue(
+                update_application_status(
+                    "https://www.hellowork.com/fr-fr/emplois/123.html",
+                    "applied",
+                    force=False,
+                    notes="",
+                    path=csv_path,
+                )
+            )
+            self.assertEqual(read_applications(csv_path)[0]["Notes"], "")
             self.assertFalse(
                 update_application_status(
                     "https://www.hellowork.com/fr-fr/emplois/123.html",
                     "manual_portal",
                     force=False,
+                    notes="Should not overwrite",
                     path=csv_path,
                 )
             )

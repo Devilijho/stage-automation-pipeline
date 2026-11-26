@@ -7,7 +7,7 @@ import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Set, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 from core.config import APPS_CSV_PATH, WORKSPACE
 
@@ -21,6 +21,7 @@ CSV_HEADERS = [
     "Matched_Keywords",
     "CV_PDF",
     "LM_PDF",
+    "Notes",
 ]
 
 SOURCE_DOMAINS: Dict[str, Tuple[str, ...]] = {
@@ -138,6 +139,7 @@ def check_and_log_application(
     lm_pdf: Union[Path, str],
     *,
     force: bool = False,
+    notes: str = "",
     path: Path = APPS_CSV_PATH,
     workspace: Path = WORKSPACE,
 ) -> bool:
@@ -179,6 +181,7 @@ def check_and_log_application(
                 "Matched_Keywords": "; ".join(matched_keywords),
                 "CV_PDF": _relativize_pdf(cv_pdf, workspace),
                 "LM_PDF": _relativize_pdf(lm_pdf, workspace),
+                "Notes": notes,
             })
             _atomic_write_csv(path, CSV_HEADERS, rows)
             return True
@@ -240,9 +243,10 @@ def update_application_status(
     *,
     company: str = "",
     force: bool = True,
+    notes: Optional[str] = None,
     path: Path = APPS_CSV_PATH,
 ) -> bool:
-    """Update the Status column for matching offer(s) atomically under an exclusive lock."""
+    """Update the Status (and optional Notes) column for matching offer(s) atomically under an exclusive lock."""
     if not path.exists():
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -253,7 +257,10 @@ def update_application_status(
                 rows = list(csv.DictReader(f))
             if not rows:
                 return False
-            headers = list(rows[0].keys())
+            for r in rows:
+                for col in CSV_HEADERS:
+                    r.setdefault(col, "")
+            headers = list(dict.fromkeys([*list(rows[0].keys()), *CSV_HEADERS]))
             norm_url = normalize_url(url)
             comp_low = (company or "").strip().lower()
             updated = False
@@ -268,6 +275,8 @@ def update_application_status(
                 if not force and (r.get("Status") or "").strip().lower() == "applied" and new_status != "applied":
                     continue
                 r["Status"] = new_status
+                if notes is not None:
+                    r["Notes"] = notes.strip()
                 updated = True
             if updated:
                 _atomic_write_csv(path, headers, rows)
@@ -281,6 +290,7 @@ def bulk_update_application_status(
     new_status: str,
     *,
     force: bool = True,
+    notes: Optional[str] = None,
     path: Path = APPS_CSV_PATH,
 ) -> int:
     """Update multiple URLs in a single lock acquisition and atomic CSV rewrite."""
@@ -297,7 +307,10 @@ def bulk_update_application_status(
                 rows = list(csv.DictReader(f))
             if not rows:
                 return 0
-            headers = list(rows[0].keys())
+            for r in rows:
+                for col in CSV_HEADERS:
+                    r.setdefault(col, "")
+            headers = list(dict.fromkeys([*list(rows[0].keys()), *CSV_HEADERS]))
             updated = 0
             for r in rows:
                 row_url = normalize_url(r.get("URL") or "")
@@ -306,6 +319,8 @@ def bulk_update_application_status(
                 if not force and (r.get("Status") or "").strip().lower() == "applied" and new_status != "applied":
                     continue
                 r["Status"] = new_status
+                if notes is not None:
+                    r["Notes"] = notes.strip()
                 updated += 1
             if updated:
                 _atomic_write_csv(path, headers, rows)

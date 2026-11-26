@@ -691,11 +691,12 @@ function renderTable() {
     if (srcFilter && src !== srcFilter) continue;
     const qual = (r.Quality || 'medium').toLowerCase();
     if (qFilter && qual !== qFilter) continue;
-    const blob = `${src} ${qual} ${r.Company} ${r.Role} ${r.Matched_Keywords}`.toLowerCase();
+    const blob = `${src} ${qual} ${r.Company} ${r.Role} ${r.Matched_Keywords} ${r.Notes || ''}`.toLowerCase();
     if (q && !blob.includes(q)) continue;
     if (r.URL) visibleUrlsCache.push(r.URL);
     const qColor = qual === 'high' ? 'var(--green)' : (qual === 'medium' ? 'var(--amber)' : 'var(--muted)');
     const qLabel = qual === 'high' ? 'High' : (qual === 'medium' ? 'Medium' : 'Low');
+    const noteHtml = r.Notes ? `<div style="font-size:11px;color:var(--amber);margin-top:3px;max-width:420px;word-break:break-word;">${r.Notes.replace(/</g,'&lt;')}</div>` : '';
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><input type="checkbox" ${selectedRemake.has(r.URL) ? 'checked' : ''} onchange="toggleRemake('${encodeURIComponent(r.URL || '')}', this.checked)"></td>
@@ -703,7 +704,7 @@ function renderTable() {
       <td><span style="font-size:11px;padding:2px 7px;border-radius:999px;border:1px solid var(--border);color:var(--muted);">${src}</span></td>
       <td><span title="Score: ${r.Score ?? ''}" style="font-size:11px;font-weight:600;padding:2px 7px;border-radius:999px;border:1px solid ${qColor};color:${qColor};">${qLabel}</span></td>
       <td><strong>${r.Company || ''}</strong></td>
-      <td><a href="${r.URL}" target="_blank" style="color:var(--accent);text-decoration:none;">${r.Role || ''}</a></td>
+      <td><a href="${r.URL}" target="_blank" style="color:var(--accent);text-decoration:none;">${r.Role || ''}</a>${noteHtml}</td>
       <td>
         <select onchange="changeStatus('${encodeURIComponent(r.URL)}', this.value)">
           ${['drafted','applied','manual_portal','needs_login','expired','skipped'].map(s => `<option value="${s}" ${r.Status===s?'selected':''}>${s}</option>`).join('')}

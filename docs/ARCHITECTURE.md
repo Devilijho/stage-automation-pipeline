@@ -37,7 +37,7 @@ cv-proyect/
 │   ├── llm_answer_cache.json # Cached grounded LLM answers for unknown form fields [gitignored]
 │   ├── stagebot.log       # Rotating diagnostic log for browser & UI errors [gitignored]
 │   └── rapport_candidatures.html # Printable University Proof Report [gitignored]
-├── docs/                  # Architecture, functionalities summary, and tuning guide
+├── docs/                  # Architecture, functionalities summary, tuning guide, and known issues/roadmap
 └── output/                # Per-company folders containing tailored CV/LM PDFs, `.tex`, `.eml`, & `metadata.json` [gitignored]
 ```
 

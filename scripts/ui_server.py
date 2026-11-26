@@ -362,13 +362,15 @@ class StageHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": False, "error": "Unsupported action"}, status=400)
             return
         if parsed.path == "/api/applications/status":
-            ok = update_application_status(body.get("url", ""), body.get("status", ""))
+            notes_arg = body.get("notes") if "notes" in body else None
+            ok = update_application_status(body.get("url", ""), body.get("status", ""), notes=notes_arg)
             self.send_json({"ok": ok})
         elif parsed.path == "/api/applications/bulk_status":
             urls = body.get("urls") or []
             new_st = body.get("status", "")
+            notes_arg = body.get("notes") if "notes" in body else None
             updated = (
-                bulk_update_application_status([str(u) for u in urls], new_st)
+                bulk_update_application_status([str(u) for u in urls], new_st, notes=notes_arg)
                 if isinstance(urls, list) and new_st
                 else 0
             )
