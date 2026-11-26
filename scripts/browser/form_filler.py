@@ -304,11 +304,19 @@ async def _answer_text_inputs(
 ) -> None:
     prof = profile if profile is not None else load_profile(PROFILE_PATH)
     edu = prof.get("education") or {}
+    cover = prof.get("cover_letter") or {}
     default_school = answers.get("ecole") or edu.get("school") or "IUT d'Orsay"
     secondary_school = edu.get("secondary_school") or ""
     school_org = f"{secondary_school} / {default_school}".strip(" /")
     postal_code = get_postal_code(prof)
-    formation = answers.get("formation") or edu.get("degree") or "BUT 2 Informatique"
+    formation = answers.get("formation") or edu.get("degree") or "Formation"
+    track = (edu.get("track") or "").strip()
+    skills_preview = ", ".join(sorted(verified_skills)[:8])
+    desc_fallback = (
+        (cover.get("experience_sentence") or "").strip()
+        or (cover.get("strengths_sentence") or "").strip()
+        or f"{track or formation} — {default_school}."
+    )
     try:
         inputs = root.locator("input:visible, textarea:visible")
         for i in range(await inputs.count()):
@@ -330,12 +338,14 @@ async def _answer_text_inputs(
 
                 val = ""
                 if any(k in q for k in ("your title", "votre titre", "intitulé du poste")):
-                    val = f"Étudiant {formation} / Développeur"
+                    val = f"Étudiant {formation}"
                 elif any(k in q for k in ("company", "entreprise", "société")) and "linkedin" not in q:
                     val = school_org
                 elif "description" in q:
-                    skills_preview = ", ".join(sorted(verified_skills)[:8]) or "C/C++, TypeScript, Linux, Docker, SQL"
-                    val = f"Développement logiciel, systèmes et sécurité ({skills_preview})."
+                    if skills_preview:
+                        val = f"{track or formation} ({skills_preview})."
+                    else:
+                        val = desc_fallback
                 elif any(
                     k in q
                     for k in (
@@ -344,11 +354,16 @@ async def _answer_text_inputs(
                         "cover letter", "coverletter", "motivationletter", "lettre de motivation",
                     )
                 ):
+                    skill_or_strength = (
+                        f"Opérationnel sur {skills_preview}, "
+                        if skills_preview
+                        else f"Motivé(e) par {cover.get('strengths_sentence') or (track or formation)}, "
+                    )
                     val = (
-                        f"Bonjour, étudiant en {formation} ({default_school}), "
+                        f"Bonjour, étudiant(e) en {formation} ({default_school}), "
                         f"je recherche un stage ({answers.get('disponibilite', '3 mois')}). "
-                        f"Opérationnel sur {', '.join(sorted(verified_skills)[:6]) or 'C/C++, Linux, SQL'}, "
-                        f"je serais ravi de rejoindre votre équipe. "
+                        f"{skill_or_strength}"
+                        f"je serais ravi(e) de rejoindre votre équipe. "
                         f"Cordialement, {answers.get('nom_complet', '')}."
                     )
                 elif any(k in q_all for k in ("code postal", "postal code", "postalcode", "codepostal", "zip")):
@@ -426,6 +441,71 @@ async def _answer_text_inputs(
         _log.warning("Text inputs scan error: %s", exc)
 
 
+_MONTH_ALIASES: Tuple[Tuple[str, ...], ...] = (
+    ("january", "janvier", "01", "1"),
+    ("february", "février", "fevrier", "02", "2"),
+    ("march", "mars", "03", "3"),
+    ("april", "avril", "04", "4"),
+    ("may", "mai", "05", "5"),
+    ("june", "juin", "06", "6"),
+    ("july", "juillet", "07", "7"),
+    ("august", "août", "aout", "08", "8"),
+    ("september", "septembre", "09", "9"),
+    ("october", "octobre", "10"),
+    ("november", "novembre", "11"),
+    ("december", "décembre", "decembre", "12"),
+)
+
+
+def _resolve_experience_select_option(
+    q: str,
+    clean_opts: List[str],
+    profile: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """Match LinkedIn/ATS Month and Year <select> dropdowns using profile['experience'] or study defaults."""
+    if not clean_opts:
+        return None
+    opts_low = [o.lower() for o in clean_opts]
+    is_month = (
+        any(k in q for k in ("month", "mois"))
+        or any(m in opts_low for m in ("january", "janvier", "september", "septembre"))
+    )
+    is_year = (
+        any(k in q for k in ("year", "année", "annee"))
+        or sum(1 for o in clean_opts if re.fullmatch(r"(?:19|20)\d{2}", o.strip())) >= 5
+    )
+    if not is_month and not is_year:
+        return None
+
+    prof = profile or {}
+    exp = prof.get("experience") or {}
+    intern_yr = str((prof.get("internship") or {}).get("year") or "").strip()
+    base_yr = int(intern_yr) if intern_yr.isdigit() else 2026
+    is_end = any(k in q for k in ("end", "fin", "to ", "jusqu", "à "))
+
+    if is_month:
+        desired = str(
+            (exp.get("end_month") if is_end else exp.get("start_month"))
+            or ("May" if is_end else "September")
+        ).strip().lower()
+        aliases: Tuple[str, ...] = (desired,)
+        for group in _MONTH_ALIASES:
+            if desired in group:
+                aliases = group
+                break
+        for alias in aliases:
+            match = next((o for o in clean_opts if o.lower() == alias or alias in o.lower()), None)
+            if match:
+                return match
+        return None
+
+    desired_yr = str(
+        (exp.get("end_year") if is_end else exp.get("start_year"))
+        or (base_yr if is_end else max(2020, base_yr - 2))
+    ).strip()
+    return next((o for o in clean_opts if o.strip() == desired_yr), None)
+
+
 async def _answer_selects(
     doc_ctx: Any,
     root: Any,
@@ -437,6 +517,7 @@ async def _answer_selects(
     custom_rules: List[Dict[str, str]],
     answered: List[str],
     *,
+    profile: Optional[Dict[str, Any]] = None,
     company: str = "",
     url: str = "",
     cache_path: Path = LLM_CACHE_PATH,
@@ -453,7 +534,10 @@ async def _answer_selects(
                     cur_txt = (await sel.locator("option:checked").first.inner_text() or "").strip().lower()
                 except Exception:
                     pass
-                placeholder_vals = {"", "select an option", "sélectionner une option", "veuillez sélectionner", "please select", "choisir...", "--", "select"}
+                placeholder_vals = {
+                    "", "select an option", "sélectionner une option", "veuillez sélectionner",
+                    "please select", "choisir...", "--", "select", "month", "year", "mois", "année", "annee",
+                }
                 if cur and cur.lower() not in placeholder_vals and cur_txt not in placeholder_vals:
                     continue
                 q = f"{await get_label_text(doc_ctx, sel)} {await get_human_question_text(doc_ctx, sel)}".lower()
@@ -461,7 +545,10 @@ async def _answer_selects(
                 opts = [o.strip() for o in opts if o.strip()]
                 clean_opts = [
                     o for o in opts
-                    if o.lower() not in {"select an option", "sélectionner une option", "veuillez sélectionner", "please select", "choisir...", "--"}
+                    if o.lower() not in {
+                        "select an option", "sélectionner une option", "veuillez sélectionner",
+                        "please select", "choisir...", "--", "month", "year", "mois", "année", "annee",
+                    }
                 ]
                 human_q = await get_human_question_text(doc_ctx, sel)
                 saved_val = saved_answers.get(human_q.lower(), "") if human_q else ""
@@ -471,6 +558,8 @@ async def _answer_selects(
                 matched_opt = None
                 if saved_val:
                     matched_opt = next((o for o in clean_opts if saved_val.lower() in o.lower()), None)
+                if not matched_opt:
+                    matched_opt = _resolve_experience_select_option(q, clean_opts, profile)
                 if not matched_opt:
                     if any(k in q for k in ("département", "departement")):
                         targets: Tuple[str, ...] = ("Essonne", "91 -", "91")
@@ -792,10 +881,13 @@ async def _answer_checkboxes(
     custom_rules: List[Dict[str, str]],
     answered: List[str],
     *,
+    profile: Optional[Dict[str, Any]] = None,
     company: str = "",
     url: str = "",
     unanswered_path: Path = UNANSWERED_QUESTIONS_PATH,
 ) -> None:
+    prof = profile or {}
+    currently_working = bool((prof.get("experience") or {}).get("currently_working", True))
     try:
         cbs = root.locator("input[type='checkbox'], [role='checkbox']:visible")
         for i in range(await cbs.count()):
@@ -849,9 +941,22 @@ async def _answer_checkboxes(
                 saved_val = saved_answers.get(human_q.lower(), "").lower() if human_q else ""
                 if not saved_val:
                     saved_val = match_custom_rule(human_q or q_low, custom_rules).lower()
+                is_currently_work = any(
+                    k in q_low
+                    for k in (
+                        "currently work", "actuellement ce poste", "actuellement en poste",
+                        "currently working", "toujours en poste",
+                    )
+                )
                 yn_cb = classify_yes_no_question(q_low, verified_skills)
 
-                if saved_val in {"checked", "oui", "yes", "true", "1"} or is_legal or (is_required and not is_marketing) or (yn_cb == ("Oui", "Yes") and not is_marketing):
+                if (
+                    saved_val in {"checked", "oui", "yes", "true", "1"}
+                    or is_legal
+                    or (is_currently_work and currently_working)
+                    or (is_required and not is_marketing)
+                    or (yn_cb == ("Oui", "Yes") and not is_marketing)
+                ):
                     if role_attr == "checkbox":
                         await cb.click(force=True)
                     else:
@@ -915,7 +1020,7 @@ async def _answer_common_questions_in_root(
     await _answer_selects(
         doc_ctx, root, answers, verified_skills,
         seen_unanswered, step_unanswered, saved_answers, custom_rules, answered,
-        company=company, url=url,
+        profile=profile, company=company, url=url,
         cache_path=cache_path, unanswered_path=unanswered_path,
     )
     await _answer_radios_and_pills(
@@ -927,7 +1032,7 @@ async def _answer_common_questions_in_root(
     await _answer_checkboxes(
         doc_ctx, root, verified_skills,
         seen_unanswered, step_unanswered, saved_answers, custom_rules, answered,
-        company=company, url=url,
+        profile=profile, company=company, url=url,
         unanswered_path=unanswered_path,
     )
 

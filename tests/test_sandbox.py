@@ -24,6 +24,7 @@ from core.sandbox import (
     resolve_offer_metadata_path,
 )
 from core.storage import read_applications
+from browser.form_filler import _resolve_experience_select_option
 from scrapers.http_client import DomainRateLimiter
 from scrapers.parsers import HttpRateLimitError, fetch_offer_details_http, linkedin_guest_detail_url
 from scrapers.scoring import classify_offer_quality, score_offer, search_location_hw, search_location_li
@@ -253,6 +254,19 @@ class SandboxModeTests(unittest.TestCase):
             self.assertEqual(search_location_hw(prod.profile_path), "Lyon")
             self.assertEqual(search_location_li(dbg.profile_path), "Paris, Île-de-France, France")
             self.assertEqual(search_location_hw(dbg.profile_path), "Paris")
+
+    def test_experience_month_year_select_resolution(self) -> None:
+        prof = {"experience": {"currently_working": True, "start_month": "September", "start_year": "2024"}, "internship": {"year": "2026"}}
+        fr_months = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"]
+        en_months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+        years = ["2026", "2025", "2024", "2023", "2022", "2021"]
+
+        self.assertEqual(_resolve_experience_select_option("start date month", fr_months, prof), "Septembre")
+        self.assertEqual(_resolve_experience_select_option("from month", en_months, prof), "September")
+        self.assertEqual(_resolve_experience_select_option("start date year", years, prof), "2024")
+        self.assertEqual(_resolve_experience_select_option("end date year", years, prof), "2026")
+        self.assertEqual(_resolve_experience_select_option("end date month", fr_months, prof), "Mai")
+        self.assertIsNone(_resolve_experience_select_option("work authorization", ["Oui", "Non"], prof))
 
 
 if __name__ == "__main__":

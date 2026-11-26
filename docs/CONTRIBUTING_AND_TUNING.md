@@ -4,7 +4,7 @@
 Edit `config/profile.json` (single source of truth):
 - `personal.postal_code` (optional, or extracted from `personal.location` / `form_answers.code_postal`) → used for postal/ZIP form inputs in `scripts/browser/form_filler.py`.
 - `internship.year` (optional), `start_date`, `end_date`, `contract_label`, `contract_note`, `availability_short`, `availability_full` → automatically reflected in `tailor.py` CVs/LMs, the UI sidebar, and date inputs / calendar pickers in `scripts/browser/form_filler.py`.
-- `education.track` (optional) and `cover_letter` (`experience_sentence`, `strengths_sentence`) → customize CV/LM prose without editing Python code.
+- `education.track` (optional), `experience` (`currently_working`, `start_month`, `start_year`, optional `end_month`, `end_year` for LinkedIn Work Experience cards), and `cover_letter` (`experience_sentence`, `strengths_sentence`) → customize CV/LM prose and Easy Apply experience dates without editing Python code.
 - `config/projects.json` (copy from `config/projects.example.json`) → defines candidate `projects` (`verify_key`, `name`, `subtitle`, `url`, `bullets`, `lm_pitch`, `search_blob`), `skills_categories`, `extra_keywords`, and optional `cover_letter` overrides for `scripts/tailor.py`.
 - `search.queries`, `location`, `location_boost`, `level_boost` → automatically used by `batch_apply.py`.
 - `preferences` (`target_roles`, `avoid_roles`, `preferred_locations`, `idf_locations`, `work_types`, `avoid_locations`) → controls 3-tier offer quality scoring (`high`, `medium`, `low`) in `batch_apply.py` and the Web UI (also editable in **6. Profile & GitHub** or auto-filled via **Import from Resume (PDF)**).

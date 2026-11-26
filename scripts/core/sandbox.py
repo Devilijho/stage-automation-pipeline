@@ -114,6 +114,11 @@ DEBUG_DEFAULT_PROFILE: Dict[str, Any] = {
         "secondary_school": "Clinique Juridique Paris II",
         "graduation_year": "2027",
     },
+    "experience": {
+        "currently_working": True,
+        "start_month": "September",
+        "start_year": "2024",
+    },
     "internship": {
         "year": "2026",
         "start_date": "04/05",

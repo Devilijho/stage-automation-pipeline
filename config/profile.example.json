@@ -23,6 +23,11 @@
     "secondary_school": "",
     "graduation_year": "2028"
   },
+  "experience": {
+    "currently_working": true,
+    "start_month": "September",
+    "start_year": "2024"
+  },
   "internship": {
     "year": "2026",
     "start_date": "03/05",
