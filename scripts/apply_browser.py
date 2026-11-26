@@ -1855,8 +1855,6 @@ async def try_click_next_step(page: Page) -> bool:
         "button[aria-label*='Review' i]",
         "button:has-text('Save and Continue')",
         "button:has-text('Enregistrer et continuer')",
-        "button:has-text('Postuler sur le site')",
-        "a:has-text('Postuler sur le site')",
         "button:has-text('Suivant')",
         "a[role='button']:has-text('Suivant')",
         "button:has-text('Vérifier')",
@@ -1992,8 +1990,6 @@ async def save_debug_screenshot(page: Page, company: str, suffix: str = "after_s
 
 
 CONFIRMATION_URL_TOKENS = (
-    "origin=responseoffer",
-    "/bounce/createalert",
     "/jobs/apply/confirm",
     "/apply/confirm",
     "/application/confirm",
