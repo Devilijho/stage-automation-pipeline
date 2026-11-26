@@ -179,10 +179,25 @@ def remake_offers(urls: List[str]) -> int:
         if is_generic_company(det.get("company", "")) and not is_generic_company(row.get("Company", "")):
             det["company"] = row["Company"]
         print(f"  [*] Remaking: {det['role']} @ {det['company']}")
-        if run_tailor_for_offer(det, extra_args=["--remake"]):
-            ok += 1
-    print(f"[+] Remade {ok}/{len(todo)} offer(s). Failures usually mean a login wall: run './stage login' and retry.")
-    return 0 if ok == len(todo) else 1
+        meta_path = run_tailor_for_offer(det, extra_args=["--remake"])
+        if not meta_path:
+            continue
+        ok += 1
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            meta = {}
+        print(f"      Title   : {row.get('CV_Title_Used', '')!r} -> {meta.get('cv_title', '')!r}")
+        print(f"      Company : {row.get('Company', '')!r} -> {meta.get('company', '')!r}")
+        print(f"      Skills  : {row.get('Matched_Keywords', '')} -> {'; '.join(meta.get('matched_keywords', []))}")
+        for w in meta.get("quality_warnings", []):
+            print(f"      [!] Quality: {w}")
+    failed = len(todo) - ok
+    print(f"[+] Remade {ok}/{len(todo)} offer(s).")
+    if failed:
+        print(f"[!] {failed} offer(s) could not be remade (login wall, expired offer or network). "
+              "Run the login button again, then retry.")
+    return 0 if not failed else 1
 
 
 def main() -> int:
