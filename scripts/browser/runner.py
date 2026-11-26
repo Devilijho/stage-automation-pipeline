@@ -42,6 +42,7 @@ from core.browser_session import (
 from core.config import (
     CHROME_PROFILE_DIR,
     MANUAL_CURRENT_PATH,
+    MANUAL_FILL_PATH,
     MANUAL_SKIP_PATH,
     PROFILE_PATH,
     WORKSPACE,
@@ -446,6 +447,11 @@ async def _run_manual_review(
                 MANUAL_SKIP_PATH.unlink()
             except Exception:
                 pass
+        if MANUAL_FILL_PATH.exists():
+            try:
+                MANUAL_FILL_PATH.unlink()
+            except Exception:
+                pass
 
         cv_rel = meta.get("cv_pdf", "")
         lm_rel = meta.get("lm_pdf", "")
@@ -504,10 +510,37 @@ async def _run_manual_review(
                     subprocess.Popen(["open", "-a", "Finder"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 except Exception:
                     pass
-            print(f"[*] [{meta.get('company', '')}] Ready — submit in Chrome (or click Skip / Mark Applied in UI), then close tab.")
+            print(f"[*] [{meta.get('company', '')}] Ready — submit in Chrome (or click Fill Current Page / Skip / Mark Applied in UI), then close tab.")
             confirmed_here = False
+            verified_skills = load_master_profile_skills()
             try:
                 while not active_pg.is_closed():
+                    if MANUAL_FILL_PATH.exists():
+                        try:
+                            MANUAL_FILL_PATH.unlink()
+                        except Exception:
+                            pass
+                        try:
+                            await accept_cookies_if_present(active_pg)
+                            re_filled = await fill_matching_fields(active_pg, profile["form_answers"], profile=profile)
+                            re_filled.extend(
+                                await answer_common_questions(
+                                    active_pg,
+                                    profile["form_answers"],
+                                    verified_skills=verified_skills,
+                                    company=meta.get("company", ""),
+                                    url=u,
+                                    profile=profile,
+                                )
+                            )
+                            attached = await inject_files(active_pg, Path(meta["cv_pdf"]), Path(meta["lm_pdf"]))
+                            print(
+                                f"[+] [{meta.get('company', '')}] Re-filled current page: "
+                                f"{len(re_filled)} field(s), {len(attached)} file(s)."
+                            )
+                        except Exception as exc:
+                            _log.warning("Manual fill-current error: %s", exc)
+                            print(f"[!] [{meta.get('company', '')}] Fill Current Page error: {exc}")
                     if MANUAL_SKIP_PATH.exists():
                         action = "skipped"
                         try:

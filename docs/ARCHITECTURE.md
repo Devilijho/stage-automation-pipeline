@@ -14,6 +14,8 @@ cv-proyect/
 ├── config/
 │   ├── profile.json       # Single source of truth (contact, availability, search queries, form answers) [gitignored]
 │   ├── profile.example.json # Anonymized template for profile.json
+│   ├── projects.json      # Candidate projects, skill categories & cover-letter copy for tailor.py [gitignored]
+│   ├── projects.example.json # Anonymized template for projects.json
 │   └── master_profile.md  # Verified GitHub + academic skill/project inventory [gitignored]
 ├── templates/
 │   ├── base_cv.tex        # Base 1-page LaTeX CV template with marker blocks
@@ -31,7 +33,11 @@ cv-proyect/
 │   └── check_code.py      # Static syntax/undefined-name checks, optional ruff lint, and unit test runner (`./stage check`)
 ├── tests/                 # Offline unit test suite + `tests/fixtures/` HTML snapshots
 ├── ui/
-│   └── index.html         # Single-page dark-mode dashboard (ES | FR | EN)
+│   ├── index.html         # Single-page dark-mode dashboard HTML shell (ES | FR | EN)
+│   ├── styles.css         # Dashboard styles
+│   ├── i18n.js            # FR / ES / EN UI translations
+│   ├── app.js             # Tracker, Fetch, Apply, Manual Review & Profile dashboard logic
+│   └── qa.js              # Q&A, LLM cache & Custom Rules tab logic
 ├── data/
 │   ├── applications.csv   # Deduplicated offer tracker with `CV_PDF` & `LM_PDF` links [gitignored]
 │   ├── llm_answer_cache.json # Cached grounded LLM answers for unknown form fields [gitignored]

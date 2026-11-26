@@ -16,13 +16,11 @@ Tracked improvements and architectural gaps to address next, especially for redu
 - **Problem**: `xpath=ancestor::...` queries do not cross Shadow DOM boundaries (used by Workday and custom web components).
 - **Proposed Fix**: Replace `xpath=ancestor::...` lookups with CSS/Playwright `locator.evaluate(...)` DOM traversal that walks `getRootNode().host` when needed.
 
-## 4. Manual Review Step-by-Step Assist ("Auto-Fill Current Step")
-- **Problem**: `_run_manual_review()` only auto-fills step 1; clicking past a login wall, cookie banner, or "Next" button manually leaves steps 2–5 unfilled.
-- **Proposed Fix**: Add an **Auto-Fill Current Step** action in the UI Manual Review card (and `/api/manual_action`) that re-runs `fill_matching_fields`, `answer_common_questions`, and `inject_files` on the active tab on demand.
+## 4. Manual Review Step-by-Step Assist — *Implemented (`Fill Current Page`)*
+- Added the **Fill Current Page** button to the Manual Review card (`ui/index.html`, `ui/app.js`, `/api/manual_action`, `runner.py`) so clicking past login walls or "Next" steps lets you re-run `fill_matching_fields`, `answer_common_questions`, and `inject_files` on demand.
 
-## 5. Externalize `tailor.py` Projects & Skills Catalog
-- **Problem**: `curated_catalog`, `build_skills_block()`, and parts of `build_lm_tex()` in `scripts/tailor.py` are still hardcoded in Python rather than loaded from `config/`.
-- **Proposed Fix**: Move curated projects/skills metadata to `config/projects.json` (or `config/profile.json`) so adding projects or updating skills requires zero Python edits.
+## 5. Externalize `tailor.py` Projects & Skills Catalog — *Implemented (`config/projects.json`)*
+- Externalized `projects`, `skills_categories`, `extra_keywords`, and `cover_letter` prose from `scripts/tailor.py` into `config/projects.json` / `config/profile.json` (with `config/projects.example.json` template).
 
 ## 6. Spontaneous Mailer Domain Lookup & UI Re-Enable
 - **Problem**: `btn-mail` is disabled in `ui/index.html`, and `scripts/spontaneous_mail.py` guesses `recrutement@<company>.fr` without verifying domains/MX records.

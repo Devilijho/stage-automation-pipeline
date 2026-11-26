@@ -1,6 +1,8 @@
 """Unit tests for tailor.py pure helpers (escaping, archetype detection, markers, keywords)."""
 
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -11,13 +13,17 @@ if str(SCRIPTS_DIR) not in sys.path:
 from tailor import (
     ARCHETYPE_ROLE_LABELS,
     CV_TITLE_MAX_LEN,
+    build_cv_accroche,
     build_cv_title,
+    build_lm_tex,
+    build_skills_block,
     clean_role_for_prose,
     cv_quality_issues,
     detect_role_archetype,
     extract_matched_keywords,
     focus_job_text,
     latex_escape,
+    parse_verified_master_profile,
     replace_marker_block,
     sanitize_slug,
     select_and_format_projects,
@@ -110,6 +116,115 @@ class TailorTests(unittest.TestCase):
         self.assertEqual(sel[0]["name"], "B")
         sel, _ = select_and_format_projects(projects, [], "texte neutre", archetype="infra")
         self.assertEqual(sel[0]["name"], "A")
+
+    def test_externalized_tailor_for_arbitrary_candidate(self) -> None:
+        mock_profile = {
+            "personal": {
+                "first_name": "Alice",
+                "last_name": "Dupont",
+                "full_name": "Alice Dupont",
+                "email": "alice@example.org",
+                "phone": "+33 6 00 00 00 00",
+                "city": "Lyon",
+                "address": "Lyon, France",
+                "github_url": "https://github.com/alice-dupont",
+                "github_handle": "github.com/alice-dupont",
+            },
+            "education": {
+                "school": "INSA Lyon",
+                "degree": "Cycle Ingénieur Informatique",
+                "track": "3ème année",
+            },
+            "internship": {
+                "duration": "10 semaines",
+                "availability_short": "10 semaines dès mai",
+                "availability_summary": "10 semaines dès mai",
+                "start_date_fr": "mai 2027",
+                "end_date_fr": "juillet 2027",
+                "duration_weeks": 10,
+                "contract_label": "stage de 10 semaines",
+                "contract_note": "conventionné",
+            },
+            "cover_letter": {
+                "experience_sentence": "Mon stage précédent chez CloudLab m'a formé à Go.",
+                "strengths_sentence": "mon autonomie et ma maîtrise des systèmes Go",
+            },
+        }
+        mock_projects_cfg = {
+            "extra_keywords": {
+                "Go": ["go", "golang"],
+                "Kubernetes": ["kubernetes", "k8s"],
+                "Terraform": ["terraform"],
+            },
+            "skills_categories": [
+                {
+                    "name": "Cloud \\& DevOps",
+                    "items": ["Go", "Kubernetes", "Terraform", "SQL"],
+                }
+            ],
+            "projects": [
+                {
+                    "verify_key": "kubescaler",
+                    "name": "KubeScaler",
+                    "subtitle": "Autoscaler Kubernetes en Go",
+                    "url": "https://github.com/alice-dupont/kubescaler",
+                    "bullets": [
+                        "Conception d'un opérateur Kubernetes en Go avec métriques Prometheus.",
+                        "Déploiement automatisé via Terraform et PostgreSQL.",
+                    ],
+                    "lm_pitch": "un opérateur Kubernetes en Go déployé avec Terraform",
+                    "search_blob": "go kubernetes terraform postgresql cloud devops",
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            master_md = tmp_dir / "master_profile.md"
+            base_cv = tmp_dir / "base_cv.tex"
+            projects_json = tmp_dir / "projects.json"
+            master_md.write_text("# Profile\nKubeScaler: Go, Kubernetes, Terraform, PostgreSQL\n", encoding="utf-8")
+            base_cv.write_text("% Go Kubernetes\n", encoding="utf-8")
+            projects_json.write_text(json.dumps(mock_projects_cfg), encoding="utf-8")
+
+            verified, projects = parse_verified_master_profile(
+                master_profile_path=master_md,
+                base_cv_path=base_cv,
+                projects_path=projects_json,
+                profile=mock_profile,
+            )
+            self.assertIn("Go", verified)
+            self.assertEqual([p["name"] for p in projects], ["KubeScaler"])
+
+            accroche = build_cv_accroche(mock_profile, "Cloud Engineer", ["Go", "Kubernetes"], archetype="infra")
+            self.assertIn("INSA Lyon", accroche)
+            self.assertIn("10 semaines", accroche)
+
+            skills_tex = build_skills_block(
+                ["Go", "Kubernetes"],
+                verified_keywords=verified,
+                projects_path=projects_json,
+            )
+            self.assertIn("Cloud \\& DevOps", skills_tex)
+            self.assertIn("Kubernetes", skills_tex)
+
+            sel, _ = select_and_format_projects(projects, ["Go", "Kubernetes"], "Go Kubernetes", archetype="infra")
+            lm_tex = build_lm_tex(
+                mock_profile,
+                "Acme Cloud",
+                "Ingénieur Cloud",
+                sel,
+                ["Go", "Kubernetes"],
+                job_text="Stage Go Kubernetes",
+                archetype="infra",
+                projects_path=projects_json,
+            )
+            generated_lm = lm_tex.split("% === LM_DATE_START ===")[1].split("% === LM_NOUS_END ===")[0]
+            self.assertIn("INSA Lyon", generated_lm)
+            self.assertIn("CloudLab", generated_lm)
+            self.assertIn("Lyon, le ", generated_lm)
+            self.assertIn("opérateur Kubernetes en Go", generated_lm)
+            for leaked in ("Webserv", "Orsay", "Paris-Saclay", "Mimitos", "espagnol"):
+                self.assertNotIn(leaked, accroche + skills_tex + generated_lm)
 
 
 if __name__ == "__main__":

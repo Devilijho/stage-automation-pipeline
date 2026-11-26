@@ -19,12 +19,14 @@ CHROME_PROFILE_DIR = WORKSPACE / ".chrome_profile"
 DEBUG_DIR = WORKSPACE / "debug"
 
 PROFILE_PATH = CONFIG_DIR / "profile.json"
+PROJECTS_PATH = CONFIG_DIR / "projects.json"
 MASTER_PROFILE_PATH = CONFIG_DIR / "master_profile.md"
 APPS_CSV_PATH = DATA_DIR / "applications.csv"
 UNANSWERED_QUESTIONS_PATH = DATA_DIR / "unanswered_questions.json"
 LLM_CACHE_PATH = DATA_DIR / "llm_answer_cache.json"
 MANUAL_CURRENT_PATH = DATA_DIR / "manual_current.json"
 MANUAL_SKIP_PATH = DATA_DIR / ".manual_skip"
+MANUAL_FILL_PATH = DATA_DIR / ".manual_fill"
 
 DEFAULT_PREFERENCES: Dict[str, List[str]] = {
     "target_roles": [

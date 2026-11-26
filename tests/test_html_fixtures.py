@@ -124,9 +124,31 @@ class HtmlFixturesAndCoreTests(unittest.TestCase):
                     with urllib.request.urlopen(req_upd, timeout=5) as r:
                         self.assertTrue(json.loads(r.read().decode("utf-8"))["ok"])
                     self.assertEqual(load_llm_cache(cache_path)["radio|permis b ?|Oui||Non"], "Oui")
+
+                    for static_path in ("/", "/styles.css", "/i18n.js", "/app.js", "/qa.js"):
+                        with urllib.request.urlopen(f"http://127.0.0.1:{port}{static_path}", timeout=5) as r:
+                            self.assertEqual(r.status, 200)
+                            self.assertGreater(len(r.read()), 50)
+
+                    fill_path = Path(tmp) / ".manual_fill"
+                    with mock.patch.object(ui_server, "MANUAL_FILL_PATH", fill_path):
+                        req_fill = urllib.request.Request(
+                            f"http://127.0.0.1:{port}/api/manual_action",
+                            data=json.dumps({"action": "fill"}).encode("utf-8"),
+                            headers={"Content-Type": "application/json"},
+                            method="POST",
+                        )
+                        with urllib.request.urlopen(req_fill, timeout=5) as r:
+                            self.assertTrue(json.loads(r.read().decode("utf-8"))["ok"])
+                        self.assertEqual(fill_path.read_text(encoding="utf-8"), "fill")
                 finally:
                     srv.shutdown()
                     srv.server_close()
+
+    def test_ui_has_notes_column_and_fill_button(self) -> None:
+        html = (Path(__file__).resolve().parent.parent / "ui" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="th-notes"', html)
+        self.assertIn("manualAction('fill')", html)
 
 
 if __name__ == "__main__":

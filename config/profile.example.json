@@ -18,6 +18,7 @@
   "education": {
     "school": "Université / IUT",
     "degree": "BUT Informatique",
+    "track": "Parcours Développement & Réseaux",
     "level": "Bac+2 / BUT 2",
     "secondary_school": "",
     "graduation_year": "2028"
@@ -29,9 +30,15 @@
     "start_date_fr": "3 mai",
     "end_date_fr": "16 juillet",
     "duration": "3 mois",
+    "contract_label": "Stage conventionné (Université / IUT)",
+    "contract_note": "stage conventionné",
     "availability_short": "Du 03/05 au 16/07 (3 mois, prolongeable durant l'été)",
     "availability_full": "Stage de 3 mois du 3 mai au 16 juillet, avec possibilité de prolongation sur l'été si besoin",
     "priority_repos": []
+  },
+  "cover_letter": {
+    "experience_sentence": "",
+    "strengths_sentence": "ma rigueur technique, ma capacité d'apprentissage rapide et mon autonomie"
   },
   "search": {
     "queries": [

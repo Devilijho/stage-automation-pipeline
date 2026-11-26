@@ -1,0 +1,43 @@
+{
+  "projects": [
+    {
+      "verify_key": "example-web-app",
+      "name": "Exemple Web App",
+      "subtitle": "Application Full-Stack TypeScript \\& PostgreSQL (Équipe)",
+      "url": "https://github.com/YourGitHubUsername/example-web-app",
+      "bullets": [
+        "Conception d'une API REST et d'une interface web responsive en TypeScript et React.",
+        "Modélisation de la base de données PostgreSQL et conteneurisation via Docker."
+      ],
+      "lm_pitch": "une application web full-stack en TypeScript, React et PostgreSQL conteneurisée avec Docker",
+      "search_blob": "typescript javascript react sql postgresql docker api rest fullstack web"
+    },
+    {
+      "verify_key": "example-systems-cli",
+      "name": "Exemple Outil Systèmes",
+      "subtitle": "Outil CLI en Python \\& Linux (Solo)",
+      "url": "https://github.com/YourGitHubUsername/example-systems-cli",
+      "bullets": [
+        "Développement d'un utilitaire système en Python avec tests unitaires automatisés.",
+        "Automatisation du déploiement sous Linux via scripts Bash et Git."
+      ],
+      "lm_pitch": "un utilitaire CLI Python sous Linux doté de tests automatisés",
+      "search_blob": "python linux bash shell git cli devops automatisation"
+    }
+  ],
+  "skills_categories": [
+    {
+      "name": "Langages",
+      "items": ["Python", "TypeScript", "JavaScript", "Java", "SQL", "HTML5/CSS3"]
+    },
+    {
+      "name": "Systèmes \\& DevOps",
+      "items": ["Linux (UNIX / Bash)", "Docker \\& Docker Compose", "Git"]
+    },
+    {
+      "name": "Frameworks \\& Outils",
+      "items": ["React", "Node.js", "API REST"]
+    }
+  ],
+  "extra_keywords": {}
+}

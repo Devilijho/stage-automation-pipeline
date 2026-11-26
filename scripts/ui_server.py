@@ -33,6 +33,9 @@ from core.config import (
     DATA_DIR,
     DEFAULT_PREFERENCES,
     LLM_CACHE_PATH,
+    MANUAL_CURRENT_PATH,
+    MANUAL_FILL_PATH,
+    MANUAL_SKIP_PATH,
     PROFILE_PATH,
     SCRIPTS_DIR,
     UI_DIR,
@@ -75,7 +78,7 @@ def run_background_script(cmd: List[str], label: str) -> bool:
     with LOG_LOCK:
         if CURRENT_PROC is not None and CURRENT_PROC.poll() is None:
             return False
-        for stale in (DATA_DIR / "manual_current.json", DATA_DIR / ".manual_skip"):
+        for stale in (MANUAL_CURRENT_PATH, MANUAL_SKIP_PATH, MANUAL_FILL_PATH):
             if stale.exists():
                 try:
                     stale.unlink()
@@ -215,6 +218,8 @@ class StageHandler(BaseHTTPRequestHandler):
 
         if path == "/" or path == "/index.html":
             self.send_file(UI_DIR / "index.html")
+        elif path in {"/styles.css", "/i18n.js", "/app.js", "/qa.js"}:
+            self.send_file(UI_DIR / path.lstrip("/"))
         elif path == "/api/applications":
             rows = read_applications()
             import batch_apply
@@ -431,8 +436,8 @@ class StageHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False}, status=400)
         elif parsed.path == "/api/manual_action":
             act = body.get("action", "")
-            mc_path = DATA_DIR / "manual_current.json"
-            skip_path = DATA_DIR / ".manual_skip"
+            mc_path = MANUAL_CURRENT_PATH
+            skip_path = MANUAL_SKIP_PATH
             if act == "finder" and mc_path.exists():
                 try:
                     cur = json.loads(mc_path.read_text(encoding="utf-8"))
@@ -453,7 +458,12 @@ class StageHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
                 self.send_json({"ok": False})
+            elif act == "fill":
+                MANUAL_FILL_PATH.parent.mkdir(parents=True, exist_ok=True)
+                MANUAL_FILL_PATH.write_text("fill", encoding="utf-8")
+                self.send_json({"ok": True})
             elif act in {"skip", "applied"}:
+                skip_path.parent.mkdir(parents=True, exist_ok=True)
                 skip_path.write_text("skipped" if act == "skip" else "applied", encoding="utf-8")
                 self.send_json({"ok": True})
             else:
