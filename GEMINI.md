@@ -11,3 +11,4 @@
 - **1-Page PDF Guarantee**: Changes to `templates/base_cv.tex`, `templates/base_lm.tex`, or `scripts/tailor.py` must preserve the 1-page compiled PDF constraint.
 - **Privacy & Gitignore Hygiene**: Never commit or expose personal/generated artifacts (`config/profile.json`, `config/master_profile.md`, `data/applications.csv`, `data/rapport_candidatures.html`, `output/`, `.chrome_profile/`).
 - **Safe Application Tracking**: Only mark an application as `applied` in `data/applications.csv` after submission is explicitly confirmed (`check_submission_confirmed`); otherwise use `manual_portal` or `drafted`.
+- **Always Verify with `./stage check`**: At the end of any code modification (and before committing), always run `./stage check` to verify Python syntax/undefined-name checks, `ruff` lint, and the offline unit test suite pass with exit code 0.

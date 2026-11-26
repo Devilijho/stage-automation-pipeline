@@ -114,7 +114,7 @@ def sync_and_inspect_git_contributions(
     all_authors_res = run_cmd(
         ["git", "shortlog", "-sn", "--all"], cwd=repo_dir, check=False
     )
-    author_lines = [l.strip() for l in all_authors_res.stdout.splitlines() if l.strip()]
+    author_lines = [line.strip() for line in all_authors_res.stdout.splitlines() if line.strip()]
     is_collab = len(author_lines) > 1
 
     seen_hashes = set()
@@ -182,8 +182,8 @@ def extract_base_cv_sections() -> str:
     body = tex.split(r"\begin{document}", 1)[-1].split(r"\end{document}", 1)[0]
     body = re.sub(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?", " ", body)
     body = body.replace("{", "").replace("}", "")
-    lines = [re.sub(r"\s+", " ", l).strip() for l in body.splitlines()]
-    cleaned = "\n".join(l for l in lines if l)
+    lines = [re.sub(r"\s+", " ", line).strip() for line in body.splitlines()]
+    cleaned = "\n".join(line for line in lines if line)
     return cleaned[:3500]
 
 

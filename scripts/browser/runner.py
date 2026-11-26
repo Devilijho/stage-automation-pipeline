@@ -237,12 +237,12 @@ async def process_offer_concurrently(
                     had_modal = await _has_visible_modal(active_page)
                     submit_ok_responses: List[str] = []
 
-                    def _on_response(resp) -> None:
+                    def _on_response(resp, _sink: List[str] = submit_ok_responses) -> None:
                         try:
                             if resp.status in (200, 201, 202, 204) and resp.request.method in ("POST", "PUT", "PATCH"):
                                 r_url = (resp.url or "").lower()
                                 if any(k in r_url for k in ("apply", "application", "candidat", "submit", "postul", "response", "jobs")):
-                                    submit_ok_responses.append(f"{resp.status} {resp.url}")
+                                    _sink.append(f"{resp.status} {resp.url}")
                         except Exception:
                             pass
 

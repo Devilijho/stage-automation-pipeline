@@ -22,7 +22,7 @@ _SCRIPTS_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
-from core.config import OUTPUT_DIR, PROFILE_PATH, SCRIPTS_DIR, WORKSPACE, load_profile
+from core.config import PROFILE_PATH, SCRIPTS_DIR, WORKSPACE, load_profile
 
 PYTHON_BIN = sys.executable
 

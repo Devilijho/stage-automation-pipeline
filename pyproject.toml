@@ -21,5 +21,9 @@ dev = [
 line-length = 120
 target-version = "py312"
 
+[tool.ruff.lint]
+select = ["E", "F", "B"]
+ignore = ["E402", "E501"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

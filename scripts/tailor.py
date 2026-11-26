@@ -29,15 +29,12 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from core.config import (
-    APPS_CSV_PATH,
     MASTER_PROFILE_PATH,
     OUTPUT_DIR,
-    PROFILE_PATH,
     TEMPLATES_DIR,
-    WORKSPACE,
     load_profile,
 )
-from core.storage import CSV_HEADERS, check_and_log_application
+from core.storage import check_and_log_application
 
 BASE_CV_PATH = TEMPLATES_DIR / "base_cv.tex"
 BASE_LM_PATH = TEMPLATES_DIR / "base_lm.tex"
@@ -535,9 +532,9 @@ def verify_pdf_one_page(pdf_path: Path, log_text: str) -> Tuple[bool, int, List[
     reader = PdfReader(str(pdf_path))
     pages = len(reader.pages)
     overfull = [
-        l.strip()
-        for l in log_text.splitlines()
-        if "Overfull \\hbox" in l or "Overfull \\vbox" in l
+        line.strip()
+        for line in log_text.splitlines()
+        if "Overfull \\hbox" in line or "Overfull \\vbox" in line
     ]
     return (pages == 1 and len(overfull) == 0), pages, overfull
 

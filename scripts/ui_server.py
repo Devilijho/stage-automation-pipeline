@@ -29,11 +29,9 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from core.config import (
-    APPS_CSV_PATH,
     CONFIG_DIR,
     DATA_DIR,
     DEFAULT_PREFERENCES,
-    OUTPUT_DIR,
     PROFILE_PATH,
     SCRIPTS_DIR,
     UI_DIR,
@@ -389,7 +387,9 @@ class StageHandler(BaseHTTPRequestHandler):
             save_profile(profile, PROFILE_PATH)
             self.send_json({"ok": True})
         elif parsed.path == "/api/import_resume":
-            import base64, io, re
+            import base64
+            import io
+            import re
             from pypdf import PdfReader
 
             b64 = body.get("pdf_base64", "")
