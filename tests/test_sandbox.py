@@ -24,7 +24,9 @@ from core.sandbox import (
     resolve_offer_metadata_path,
 )
 from core.storage import read_applications
-from scrapers.scoring import classify_offer_quality, score_offer
+from scrapers.http_client import DomainRateLimiter
+from scrapers.parsers import HttpRateLimitError, fetch_offer_details_http, linkedin_guest_detail_url
+from scrapers.scoring import classify_offer_quality, score_offer, search_location_hw, search_location_li
 
 
 class SandboxModeTests(unittest.TestCase):
@@ -210,6 +212,47 @@ class SandboxModeTests(unittest.TestCase):
                 finally:
                     srv.shutdown()
                     srv.server_close()
+
+    def test_linkedin_guest_url_rate_limiter_and_profile_locations(self) -> None:
+        self.assertEqual(
+            linkedin_guest_detail_url("https://fr.linkedin.com/jobs/view/stage-juriste-4495042227"),
+            "https://fr.linkedin.com/jobs-guest/jobs/api/jobPosting/4495042227",
+        )
+        self.assertEqual(
+            linkedin_guest_detail_url("https://www.hellowork.com/fr-fr/emplois/123.html"),
+            "https://www.hellowork.com/fr-fr/emplois/123.html",
+        )
+
+        # Verify DomainRateLimiter records next_allowed per host without blocking other hosts.
+        limiter = DomainRateLimiter(jitter=0.0)
+        with mock.patch("scrapers.http_client.time.sleep") as mock_sleep:
+            limiter.wait("https://fr.linkedin.com/jobs/view/1")
+            limiter.wait("https://www.hellowork.com/fr-fr/emplois/1.html")
+            self.assertEqual(mock_sleep.call_count, 0)
+            limiter.wait("https://fr.linkedin.com/jobs/view/2")
+            self.assertEqual(mock_sleep.call_count, 1)
+
+        # Verify HTTP 429 raises HttpRateLimitError for clean browser fallback.
+        fake_resp = mock.MagicMock(status_code=429)
+        with mock.patch("scrapers.parsers.http_get", return_value=fake_resp):
+            with self.assertRaises(HttpRateLimitError):
+                fetch_offer_details_http({"source": "LinkedIn", "url": "https://fr.linkedin.com/jobs/view/123"})
+
+        # Verify search_location_li/hw isolate prod vs debug profile locations.
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            prod = get_runtime_paths(debug=False, workspace=ws)
+            dbg = get_runtime_paths(debug=True, workspace=ws)
+            prod.profile_path.parent.mkdir(parents=True, exist_ok=True)
+            prod.profile_path.write_text(
+                json.dumps({"search": {"location": "Lyon, France", "location_short": "Lyon"}}),
+                encoding="utf-8",
+            )
+            ensure_debug_sandbox(dbg)
+            self.assertEqual(search_location_li(prod.profile_path), "Lyon, France")
+            self.assertEqual(search_location_hw(prod.profile_path), "Lyon")
+            self.assertEqual(search_location_li(dbg.profile_path), "Paris, Île-de-France, France")
+            self.assertEqual(search_location_hw(dbg.profile_path), "Paris")
 
 
 if __name__ == "__main__":

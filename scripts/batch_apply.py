@@ -32,7 +32,7 @@ from core.config import (
     WORKSPACE,
     load_preferences,
 )
-from core.offer_text import is_generic_company
+from core.offer_text import is_generic_company, sanitize_role
 from core.sandbox import (
     create_debug_offer_metadata,
     ensure_debug_sandbox,
@@ -56,6 +56,7 @@ from scrapers.boards import (
 )
 from scrapers.http_client import AsyncBrowserPool
 from scrapers.parsers import (
+    HttpRateLimitError,
     clean_company_name,
     fetch_offer_details_browser,
     fetch_offer_details_http,
@@ -335,12 +336,27 @@ def main() -> int:
 
         # 1. Run HTTP-based searches concurrently (LinkedIn, HelloWork, WTTJ Algolia)
         http_tasks = []
-        with ThreadPoolExecutor(max_workers=6) as pool:
+        with ThreadPoolExecutor(max_workers=4) as pool:
             for q in args.queries:
                 if "linkedin" in args.sources:
-                    http_tasks.append(pool.submit(scrape_linkedin_paginated, q, per_query, args.easy_apply))
+                    http_tasks.append(
+                        pool.submit(
+                            scrape_linkedin_paginated,
+                            q,
+                            per_query,
+                            args.easy_apply,
+                            profile_path=paths.profile_path,
+                        )
+                    )
                 if "hellowork" in args.sources:
-                    http_tasks.append(pool.submit(scrape_hellowork_paginated, q, per_query))
+                    http_tasks.append(
+                        pool.submit(
+                            scrape_hellowork_paginated,
+                            q,
+                            per_query,
+                            profile_path=paths.profile_path,
+                        )
+                    )
                 if "wttj" in args.sources:
                     http_tasks.append(pool.submit(scrape_wttj_paginated, q, per_query))
             for fut in as_completed(http_tasks):
@@ -353,20 +369,20 @@ def main() -> int:
                 except Exception as e:
                     print(f"  [!] Search task error: {e}")
 
-        # 2. Run cookie-walled browser searches concurrently via 5-tab AsyncBrowserPool
+        # 2. Run cookie-walled browser searches concurrently via paced 3-tab AsyncBrowserPool
         browser_source_keys = [s for s in args.sources if s in COOKIE_SOURCES]
 
         async def _run_browser_phase(
             search_sources: List[str],
             detail_browser_offers: List[Dict[str, str]],
         ) -> Tuple[List[Dict[str, str]], List[Tuple[Dict[str, str], Optional[Dict[str, str]], Optional[Exception]]]]:
-            pool = AsyncBrowserPool(max_tabs=5)
+            pool = AsyncBrowserPool(max_tabs=3)
             search_results: List[Dict[str, str]] = []
             detail_results: List[Tuple[Dict[str, str], Optional[Dict[str, str]], Optional[Exception]]] = []
             try:
                 if search_sources:
                     coros = [
-                        BROWSER_SCRAPERS[src_key](pool, q, per_query)
+                        BROWSER_SCRAPERS[src_key](pool, q, per_query, profile_path=paths.profile_path)
                         for q in args.queries
                         for src_key in search_sources
                         if src_key in BROWSER_SCRAPERS
@@ -404,31 +420,63 @@ def main() -> int:
         for o in raw_offers:
             if len(candidates) >= detail_cap:
                 break
-            if is_excluded_final_year_offer(o.get("preview", "")):
-                print(f"  [-] Pre-filtered PFE/Bac+5 offer: {o.get('preview', o['url'])[:80]}")
+            preview_txt = o.get("preview", "")
+            if is_excluded_final_year_offer(preview_txt):
+                print(f"  [-] Pre-filtered PFE/Bac+5 offer: {preview_txt[:80] or o['url']}")
                 continue
+            clean_prev = (sanitize_role(preview_txt) or preview_txt).lower()
+            if clean_prev and not any(good in clean_prev for good in prefs.get("target_roles", [])):
+                if any(bad in clean_prev for bad in prefs.get("avoid_roles", [])):
+                    print(f"  [-] Pre-filtered off-profile title: {preview_txt[:80]}")
+                    continue
             candidates.append(o)
 
         http_candidates = [o for o in candidates if o["source"] in {"LinkedIn", "HelloWork", "WTTJ"}]
         browser_candidates = [o for o in candidates if o["source"] not in {"LinkedIn", "HelloWork", "WTTJ"}]
 
         fetched_details: List[Dict[str, str]] = []
-        wttj_fallback: List[Dict[str, str]] = []
+        browser_fallback: List[Dict[str, str]] = []
 
         if http_candidates:
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                future_map = {pool.submit(fetch_offer_details_http, o): o for o in http_candidates}
+            rate_lock = threading.Lock()
+            consecutive_429: Dict[str, int] = {}
+            tripped_sources: Set[str] = set()
+
+            def _fetch_http_paced(offer: Dict[str, str]) -> Optional[Dict[str, str]]:
+                src = offer["source"]
+                with rate_lock:
+                    if src in tripped_sources:
+                        return None
+                return fetch_offer_details_http(offer)
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                future_map = {pool.submit(_fetch_http_paced, o): o for o in http_candidates}
                 for fut in as_completed(future_map):
                     o = future_map[fut]
+                    src = o["source"]
                     try:
-                        fetched_details.append(fut.result())
+                        det = fut.result()
+                        if det is None:
+                            browser_fallback.append(o)
+                            continue
+                        with rate_lock:
+                            consecutive_429[src] = 0
+                        fetched_details.append(det)
+                    except HttpRateLimitError:
+                        with rate_lock:
+                            consecutive_429[src] = consecutive_429.get(src, 0) + 1
+                            if consecutive_429[src] >= 3 and src not in tripped_sources:
+                                tripped_sources.add(src)
+                                print(f"  [!] {src} rate-limited (429 x3) — switching remaining {src} fetches to browser session.")
+                        print(f"  [!] {src} 429 for {o['url']} — queuing browser fallback")
+                        browser_fallback.append(o)
                     except Exception as e:
-                        if o["source"] == "WTTJ":
-                            wttj_fallback.append(o)
+                        if src == "WTTJ" or "login" in str(e).lower():
+                            browser_fallback.append(o)
                         else:
                             print(f"  [!] Skipping {o['url']}: {e}")
 
-        browser_candidates.extend(wttj_fallback)
+        browser_candidates.extend(browser_fallback)
         if browser_candidates:
             _, b_details = asyncio.run(_run_browser_phase([], browser_candidates))
             for o, det, err in b_details:

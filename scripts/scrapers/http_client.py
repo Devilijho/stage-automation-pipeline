@@ -1,8 +1,10 @@
 """Pooled HTTP sessions and async Playwright Chromium browser pool for scrapers."""
 
 import asyncio
+import random
 import threading
-from typing import Any, Optional, Set, Tuple
+import time
+from typing import Any, Dict, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 import requests
@@ -26,16 +28,81 @@ HEADERS = {
 
 _THREAD_LOCAL = threading.local()
 
+# Minimum seconds between requests to the same host (plus random jitter).
+DEFAULT_DOMAIN_INTERVALS: Dict[str, float] = {
+    "linkedin.com": 1.25,
+    "hellowork.com": 0.35,
+    "welcometothejungle.com": 0.4,
+    "algolia.net": 0.25,
+    "indeed.com": 0.9,
+    "apec.fr": 0.6,
+    "jobteaser.com": 0.6,
+    "meteojob.com": 0.6,
+}
+
+
+def _host_interval(url: str, default: float = 0.45) -> float:
+    host = urlparse(url).netloc.lower()
+    for dom, sec in DEFAULT_DOMAIN_INTERVALS.items():
+        if dom in host:
+            return sec
+    return default
+
+
+class DomainRateLimiter:
+    """Thread-safe per-host pacer so concurrent workers never burst a single job board."""
+
+    def __init__(self, jitter: float = 0.35) -> None:
+        self._jitter = jitter
+        self._guard = threading.Lock()
+        self._next_allowed: Dict[str, float] = {}
+
+    def wait(self, url: str) -> None:
+        host = urlparse(url).netloc.lower() or "default"
+        interval = _host_interval(url)
+        with self._guard:
+            now = time.monotonic()
+            target = max(now, self._next_allowed.get(host, 0.0))
+            delay = target - now
+            self._next_allowed[host] = target + interval + random.uniform(0.0, self._jitter)
+        if delay > 0:
+            time.sleep(delay)
+
+
+class AsyncDomainRateLimiter:
+    """Async per-host pacer for Playwright browser pool tabs."""
+
+    def __init__(self, jitter: float = 0.35) -> None:
+        self._jitter = jitter
+        self._lock: Optional[asyncio.Lock] = None
+        self._next_allowed: Dict[str, float] = {}
+
+    async def wait(self, url: str) -> None:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        host = urlparse(url).netloc.lower() or "default"
+        interval = _host_interval(url)
+        async with self._lock:
+            now = time.monotonic()
+            target = max(now, self._next_allowed.get(host, 0.0))
+            delay = target - now
+            self._next_allowed[host] = target + interval + random.uniform(0.0, self._jitter)
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+
+HTTP_RATE_LIMITER = DomainRateLimiter()
+
 
 def get_http_session() -> requests.Session:
-    """Return a thread-local requests.Session with connection pooling and retry/backoff."""
+    """Return a thread-local requests.Session with connection pooling and safe transient retry."""
     sess = getattr(_THREAD_LOCAL, "session", None)
     if sess is None:
         sess = requests.Session()
         retry = Retry(
-            total=3,
+            total=2,
             backoff_factor=0.6,
-            status_forcelist=(429, 500, 502, 503, 504),
+            status_forcelist=(500, 502, 503, 504),
             allowed_methods=("GET", "POST"),
             raise_on_status=False,
         )
@@ -45,6 +112,18 @@ def get_http_session() -> requests.Session:
         sess.headers.update(HEADERS)
         _THREAD_LOCAL.session = sess
     return sess
+
+
+def http_get(url: str, *, timeout: int = 15, **kwargs: Any) -> requests.Response:
+    """Perform a per-domain rate-limited HTTP GET."""
+    HTTP_RATE_LIMITER.wait(url)
+    return get_http_session().get(url, timeout=timeout, **kwargs)
+
+
+def http_post(url: str, *, timeout: int = 15, **kwargs: Any) -> requests.Response:
+    """Perform a per-domain rate-limited HTTP POST."""
+    HTTP_RATE_LIMITER.wait(url)
+    return get_http_session().post(url, timeout=timeout, **kwargs)
 
 
 def is_login_wall(final_url: str, html: str) -> bool:
@@ -60,7 +139,7 @@ def is_login_wall(final_url: str, html: str) -> bool:
 class AsyncBrowserPool:
     """Async multi-tab headless Chromium pool sharing `.chrome_profile/` login cookies."""
 
-    def __init__(self, max_tabs: int = 5) -> None:
+    def __init__(self, max_tabs: int = 3) -> None:
         self.max_tabs = max_tabs
         self._pw = None
         self._context = None
@@ -68,6 +147,7 @@ class AsyncBrowserPool:
         self._failed = False
         self._start_lock: Optional[asyncio.Lock] = None
         self._dismissed_domains: Set[str] = set()
+        self._rate_limiter = AsyncDomainRateLimiter()
 
     async def _ensure_started(self) -> bool:
         if self._pages is not None:
@@ -139,6 +219,7 @@ class AsyncBrowserPool:
         assert self._pages is not None
         page = await self._pages.get()
         try:
+            await self._rate_limiter.wait(url)
             await page.goto(url, wait_until="domcontentloaded", timeout=20000)
             if wait_selector:
                 try:

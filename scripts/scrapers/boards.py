@@ -1,20 +1,27 @@
 """Paginated job board search scrapers (LinkedIn, HelloWork, WTTJ, JobTeaser, Indeed, APEC, Meteojob)."""
 
 import re
-import time
+from pathlib import Path
 from typing import Any, Callable, Coroutine, Dict, List, Set
 from urllib.parse import quote_plus, urljoin
 
 from bs4 import BeautifulSoup
 
-from scrapers.http_client import HEADERS, AsyncBrowserPool, get_http_session, is_login_wall
+from core.config import PROFILE_PATH
+from scrapers.http_client import HEADERS, AsyncBrowserPool, http_get, http_post, is_login_wall
 from scrapers.scoring import search_location_hw, search_location_li
 
 COOKIE_SOURCES = {"jobteaser", "indeed", "apec", "meteojob"}
 ALL_SOURCES = ["linkedin", "hellowork", "wttj", "jobteaser", "indeed", "apec", "meteojob"]
 
 
-def scrape_linkedin_paginated(query: str, max_per_query: int, easy_apply: bool = False) -> List[Dict[str, str]]:
+def scrape_linkedin_paginated(
+    query: str,
+    max_per_query: int,
+    easy_apply: bool = False,
+    *,
+    profile_path: Path = PROFILE_PATH,
+) -> List[Dict[str, str]]:
     """Paginate LinkedIn's public guest job postings endpoint (no login wall)."""
     print(f"[*] Searching LinkedIn{' (Easy Apply only)' if easy_apply else ''}: '{query}' ...")
     offers: List[Dict[str, str]] = []
@@ -25,12 +32,14 @@ def scrape_linkedin_paginated(query: str, max_per_query: int, easy_apply: bool =
         url = (
             f"https://fr.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
             f"?keywords={quote_plus(query)}"
-            f"&location={quote_plus(search_location_li())}"
+            f"&location={quote_plus(search_location_li(profile_path))}"
             f"&f_JT=I{'&f_AL=true' if easy_apply else ''}&start={start}"
         )
         try:
-            resp = get_http_session().get(url, timeout=15)
+            resp = http_get(url, timeout=15)
             if resp.status_code != 200 or not resp.text.strip():
+                if resp.status_code == 429:
+                    print(f"  [!] LinkedIn search rate-limited (429) at start={start}")
                 break
             soup = BeautifulSoup(resp.text, "html.parser")
             anchors = soup.select("a[href*='/jobs/view/']")
@@ -57,14 +66,18 @@ def scrape_linkedin_paginated(query: str, max_per_query: int, easy_apply: bool =
             if new_on_page == 0:
                 break
             start += 10
-            time.sleep(0.15)
         except Exception as e:
             print(f"  [!] LinkedIn pagination error (start={start}): {e}")
             break
     return offers
 
 
-def scrape_hellowork_paginated(query: str, max_per_query: int) -> List[Dict[str, str]]:
+def scrape_hellowork_paginated(
+    query: str,
+    max_per_query: int,
+    *,
+    profile_path: Path = PROFILE_PATH,
+) -> List[Dict[str, str]]:
     """Paginate HelloWork (open French job board, stage filter c=Stage)."""
     print(f"[*] Searching HelloWork: '{query}' ...")
     offers: List[Dict[str, str]] = []
@@ -74,10 +87,10 @@ def scrape_hellowork_paginated(query: str, max_per_query: int) -> List[Dict[str,
     while len(offers) < max_per_query and page_num <= 12:
         url = (
             f"https://www.hellowork.com/fr-fr/emploi/recherche.html"
-            f"?k={quote_plus(query)}&l={quote_plus(search_location_hw())}&c=Stage&p={page_num}"
+            f"?k={quote_plus(query)}&l={quote_plus(search_location_hw(profile_path))}&c=Stage&p={page_num}"
         )
         try:
-            resp = get_http_session().get(url, timeout=15)
+            resp = http_get(url, timeout=15)
             if resp.status_code != 200:
                 break
             soup = BeautifulSoup(resp.text, "html.parser")
@@ -129,7 +142,7 @@ def scrape_wttj_paginated(query: str, max_per_query: int) -> List[Dict[str, str]
     hits_per_page = min(max(max_per_query, 20), 50)
     while len(offers) < max_per_query and page_num < 5:
         try:
-            resp = get_http_session().post(
+            resp = http_post(
                 algolia_url,
                 headers=algolia_headers,
                 json={
@@ -179,7 +192,13 @@ def scrape_wttj_paginated(query: str, max_per_query: int) -> List[Dict[str, str]
     return offers
 
 
-async def scrape_jobteaser_paginated(browser: AsyncBrowserPool, query: str, max_per_query: int) -> List[Dict[str, str]]:
+async def scrape_jobteaser_paginated(
+    browser: AsyncBrowserPool,
+    query: str,
+    max_per_query: int,
+    *,
+    profile_path: Path = PROFILE_PATH,
+) -> List[Dict[str, str]]:
     """Paginate JobTeaser (university/IUT stage portal) using `.chrome_profile/` cookies."""
     print(f"[*] Searching JobTeaser: '{query}' ...")
     offers: List[Dict[str, str]] = []
@@ -224,7 +243,13 @@ async def scrape_jobteaser_paginated(browser: AsyncBrowserPool, query: str, max_
     return offers
 
 
-async def scrape_indeed_paginated(browser: AsyncBrowserPool, query: str, max_per_query: int) -> List[Dict[str, str]]:
+async def scrape_indeed_paginated(
+    browser: AsyncBrowserPool,
+    query: str,
+    max_per_query: int,
+    *,
+    profile_path: Path = PROFILE_PATH,
+) -> List[Dict[str, str]]:
     """Paginate Indeed France (internship filter) using `.chrome_profile/` cookies."""
     print(f"[*] Searching Indeed France: '{query}' ...")
     offers: List[Dict[str, str]] = []
@@ -234,7 +259,7 @@ async def scrape_indeed_paginated(browser: AsyncBrowserPool, query: str, max_per
     while len(offers) < max_per_query and start <= 80:
         url = (
             f"https://fr.indeed.com/jobs"
-            f"?q={quote_plus(query)}&l={quote_plus(search_location_hw())}&jt=internship&start={start}"
+            f"?q={quote_plus(query)}&l={quote_plus(search_location_hw(profile_path))}&jt=internship&start={start}"
         )
         final_url, html = await browser.fetch_html(url, wait_selector="a[data-jk], a[href*='/viewjob']", wait_ms=1800)
         if not html:
@@ -273,7 +298,13 @@ async def scrape_indeed_paginated(browser: AsyncBrowserPool, query: str, max_per
     return offers
 
 
-async def scrape_apec_paginated(browser: AsyncBrowserPool, query: str, max_per_query: int) -> List[Dict[str, str]]:
+async def scrape_apec_paginated(
+    browser: AsyncBrowserPool,
+    query: str,
+    max_per_query: int,
+    *,
+    profile_path: Path = PROFILE_PATH,
+) -> List[Dict[str, str]]:
     """Paginate APEC (offres de stage) using `.chrome_profile/` cookies."""
     print(f"[*] Searching APEC: '{query}' ...")
     offers: List[Dict[str, str]] = []
@@ -318,7 +349,13 @@ async def scrape_apec_paginated(browser: AsyncBrowserPool, query: str, max_per_q
     return offers
 
 
-async def scrape_meteojob_paginated(browser: AsyncBrowserPool, query: str, max_per_query: int) -> List[Dict[str, str]]:
+async def scrape_meteojob_paginated(
+    browser: AsyncBrowserPool,
+    query: str,
+    max_per_query: int,
+    *,
+    profile_path: Path = PROFILE_PATH,
+) -> List[Dict[str, str]]:
     """Paginate Meteojob (internship filter) using `.chrome_profile/` cookies."""
     print(f"[*] Searching Meteojob: '{query}' ...")
     offers: List[Dict[str, str]] = []
@@ -328,7 +365,7 @@ async def scrape_meteojob_paginated(browser: AsyncBrowserPool, query: str, max_p
     while len(offers) < max_per_query and page_num <= 8:
         url = (
             f"https://www.meteojob.com/jobs"
-            f"?what={quote_plus(query)}&where={quote_plus(search_location_hw())}"
+            f"?what={quote_plus(query)}&where={quote_plus(search_location_hw(profile_path))}"
             f"&contractType=INTERNSHIP&page={page_num}"
         )
         final_url, html = await browser.fetch_html(url, wait_selector="a[href*='/jobs/'], a[href*='/candidat/offres/']", wait_ms=1800)

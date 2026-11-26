@@ -7,7 +7,19 @@ from typing import Dict
 from bs4 import BeautifulSoup
 
 from core.offer_text import company_from_listing, is_generic_company, sanitize_role, truncate_words
-from scrapers.http_client import AsyncBrowserPool, get_http_session, is_login_wall
+from scrapers.http_client import AsyncBrowserPool, http_get, is_login_wall
+
+
+class HttpRateLimitError(RuntimeError):
+    """Raised when a job board returns HTTP 429 Too Many Requests."""
+
+
+def linkedin_guest_detail_url(url: str) -> str:
+    """Convert a LinkedIn /jobs/view/... URL to the lighter guest jobPosting API endpoint."""
+    m = re.search(r"/jobs/view/(?:[^/?#]*-)?(\d+)", url or "")
+    if m:
+        return f"https://fr.linkedin.com/jobs-guest/jobs/api/jobPosting/{m.group(1)}"
+    return url
 
 _COMPANY_CTA_REJECT = (
     "postuler",
@@ -157,8 +169,11 @@ def parse_offer_html(offer: Dict[str, str], html: str) -> Dict[str, str]:
 
 
 def fetch_offer_details_http(offer: Dict[str, str]) -> Dict[str, str]:
-    """Fetch offer details via pooled HTTP session."""
-    resp = get_http_session().get(offer["url"], timeout=15)
+    """Fetch offer details via per-domain rate-limited HTTP session."""
+    fetch_url = linkedin_guest_detail_url(offer["url"]) if offer.get("source") == "LinkedIn" else offer["url"]
+    resp = http_get(fetch_url, timeout=15)
+    if resp.status_code == 429:
+        raise HttpRateLimitError(f"429 Too Many Requests for {offer['url']}")
     resp.raise_for_status()
     if is_login_wall(resp.url, resp.text):
         raise RuntimeError(f"{offer['source']} redirected to login")
