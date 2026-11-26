@@ -160,11 +160,95 @@ def is_excluded_final_year_offer(title: str, description: str = "") -> bool:
     return False
 
 
+DEFAULT_PREFERENCES: Dict[str, List[str]] = {
+    "target_roles": [
+        "développeur", "developpeur", "software", "fullstack", "full-stack",
+        "backend", "frontend", "web", "cybersécurité", "cybersecurite",
+        "réseaux", "reseaux", "systèmes", "systemes", "devops", "data",
+        "ia", "cloud", "linux", "informatique",
+    ],
+    "avoid_roles": [
+        "paie", "ressources humaines", "comptab", "commercial", "vente",
+        "juridique", "agronomie", "formulation", "achats", "marketing", "finance", "audit",
+    ],
+    "preferred_locations": [
+        "bures", "orsay", "saclay", "palaiseau", "massy", "gif",
+        "les ulis", "91", "essonne", "velizy", "vélizy", "versailles", "antony",
+    ],
+    "idf_locations": [
+        "paris", "île-de-france", "ile-de-france", "nanterre", "courbevoie",
+        "la défense", "la defense", "boulogne", "issy", "montrouge", "clichy",
+        "levallois", "neuilly", "92", "93", "94", "78", "75",
+    ],
+    "work_types": ["télétravail", "teletravail", "remote", "hybride", "hybrid"],
+    "avoid_locations": [
+        "lyon", "toulouse", "marseille", "bordeaux", "nantes", "lille",
+        "roubaix", "annecy", "saint-etienne", "saint-étienne", "canada",
+        "strasbourg", "rennes", "nice", "montpellier", "grenoble", "la hague", "penly", "cholet",
+    ],
+}
+
+
+def load_preferences() -> Dict[str, List[str]]:
+    raw = PROFILE.get("preferences") or {}
+    return {k: [str(x).lower() for x in (raw.get(k) or v)] for k, v in DEFAULT_PREFERENCES.items()}
+
+
+def classify_offer_quality(
+    role: str,
+    location: str = "",
+    description: str = "",
+    matched_keywords: str = "",
+    url: str = "",
+    prefs: Optional[Dict[str, List[str]]] = None,
+) -> Tuple[str, int]:
+    """Classify an offer into ('high' | 'medium' | 'low', score) using role, distance, work type, and level."""
+    p = prefs if prefs is not None else load_preferences()
+    r_low = (role or "").lower()
+    l_low = (location or "").lower()
+    d_low = (description or "").lower()
+    u_low = (url or "").lower()
+    kw_low = (matched_keywords or "").lower()
+    loc_blob = f"{l_low} {u_low} {d_low[:800]}"
+
+    score = 0
+    if any(t in r_low for t in ("stage", "intern", "stagiaire")):
+        score += 10
+
+    if any(bad in r_low for bad in p.get("avoid_roles", [])):
+        score -= 40
+    elif any(good in r_low or good in kw_low for good in p.get("target_roles", [])):
+        score += 30
+
+    kw_count = len([k for k in kw_low.split(",") if k.strip()])
+    score += min(15, kw_count * 3)
+
+    is_remote = any(w in f"{r_low} {l_low} {d_low}" for w in p.get("work_types", []))
+    if is_remote:
+        score += 15
+
+    if any(loc in loc_blob for loc in p.get("preferred_locations", [])):
+        score += 25
+    elif any(loc in loc_blob for loc in p.get("idf_locations", [])):
+        score += 12
+    elif any(loc in f"{l_low} {u_low}" for loc in p.get("avoid_locations", [])) and not is_remote:
+        score -= 30
+
+    if any(lvl in f"{r_low} {d_low}" for lvl in LEVEL_BOOST):
+        score += 10
+    elif any(lvl in f"{r_low} {d_low}" for lvl in ("bac+5", "bac +5", "master 2", "m2", "pfe")) and not any(
+        ok in f"{r_low} {d_low}" for ok in ("bac+2", "bac +2", "bac+3", "bac +3", "but 2", "but 3")
+    ):
+        score -= 20
+
+    tier = "high" if score >= 40 else ("medium" if score >= 15 else "low")
+    return tier, score
+
+
 def score_offer(title: str, location: str, description: str) -> int:
     t_low = title.lower()
-    l_low = location.lower()
-    d_low = description.lower()
-
+    if any(bad in t_low for bad in ("page introuvable", "page not found", "just a moment", "access denied")):
+        return -100
     if any(bad in t_low for bad in EXCLUDE_TITLE_TERMS) and "stage" not in t_low:
         return -100
 
@@ -172,16 +256,8 @@ def score_offer(title: str, location: str, description: str) -> int:
     if is_excluded_final_year_offer(title, description):
         return -50
 
-    score = 0
-    if "stage" in t_low or "intern" in t_low or "stagiaire" in t_low:
-        score += 10
-    for loc in LOCATION_BOOST:
-        if loc in l_low or loc in d_low:
-            score += 4
-    for lvl in LEVEL_BOOST:
-        if lvl in d_low or lvl in t_low:
-            score += 8
-    return score
+    _, score = classify_offer_quality(title, location=location, description=description)
+    return max(0, score)
 
 
 def scrape_linkedin_paginated(query: str, max_per_query: int, easy_apply: bool = False) -> List[Dict[str, str]]:
@@ -338,33 +414,29 @@ class AsyncBrowserPool:
                             except Exception:
                                 pass
                 self._pw = await async_playwright().start()
-                self._context = await self._pw.chromium.launch_persistent_context(
-                    user_data_dir=str(CHROME_PROFILE_DIR),
-                    headless=True,
-                    channel="chromium",
-                    viewport={"width": 1280, "height": 860},
-                    locale="fr-FR",
-                    user_agent=(
+                pool_kwargs: Dict[str, Any] = {
+                    "user_data_dir": str(CHROME_PROFILE_DIR),
+                    "headless": True,
+                    "viewport": {"width": 1280, "height": 860},
+                    "locale": "fr-FR",
+                    "ignore_default_args": ["--enable-automation"],
+                    "args": ["--disable-blink-features=AutomationControlled"],
+                }
+                if Path("/Applications/Google Chrome.app").exists():
+                    pool_kwargs["channel"] = "chrome"
+                else:
+                    pool_kwargs["channel"] = "chromium"
+                    pool_kwargs["user_agent"] = (
                         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                    ),
-                    ignore_default_args=["--enable-automation"],
-                    args=["--disable-blink-features=AutomationControlled"],
-                )
+                    )
+                self._context = await self._pw.chromium.launch_persistent_context(**pool_kwargs)
                 storage_state_path = CHROME_PROFILE_DIR / "storage_state.json"
                 if storage_state_path.exists():
                     try:
                         saved = json.loads(storage_state_path.read_text(encoding="utf-8"))
-                        existing_keys = {
-                            (c.get("name"), c.get("domain"))
-                            for c in await self._context.cookies()
-                        }
-                        missing = [
-                            c for c in saved.get("cookies", [])
-                            if (c.get("name"), c.get("domain")) not in existing_keys
-                        ]
-                        if missing:
-                            await self._context.add_cookies(missing)
+                        if saved.get("cookies"):
+                            await self._context.add_cookies(saved["cookies"])
                     except Exception:
                         pass
                 q: asyncio.Queue = asyncio.Queue()
@@ -592,7 +664,7 @@ async def scrape_indeed_paginated(browser: AsyncBrowserPool, query: str, max_per
             print("  [!] Indeed France requested login — run './stage login' to save cookies.")
             break
         soup = BeautifulSoup(html, "html.parser")
-        anchors = soup.select("a[data-jk], a[href*='/viewjob'], a[href*='/rc/clk'], a[href*='/pagead/clk']")
+        anchors = soup.select("a[data-jk], a[href*='/viewjob']")
         if not anchors:
             break
         new_on_page = 0
@@ -875,7 +947,11 @@ async def fetch_offer_details_browser(offer: Dict[str, str], browser: AsyncBrows
         raise RuntimeError("Empty HTML from browser session")
     if is_login_wall(final_url, html):
         raise RuntimeError(f"{offer['source']} redirected to login — run './stage login'")
-    return parse_offer_html(offer, html)
+    det = parse_offer_html(offer, html)
+    role_low = (det.get("role") or "").lower()
+    if any(bad in role_low for bad in ("page introuvable", "page not found", "just a moment", "access denied")):
+        raise RuntimeError(f"Blocked/404 page ({det.get('role')})")
+    return det
 
 
 def run_tailor_for_offer(offer: Dict[str, str]) -> Path | None:
@@ -920,8 +996,8 @@ def main() -> int:
         "--sources",
         nargs="+",
         choices=ALL_SOURCES,
-        default=["linkedin", "hellowork"],
-        help=f"Job boards to search (choices: {', '.join(ALL_SOURCES)})",
+        default=None,
+        help=f"Job boards to search or filter on --retry (choices: {', '.join(ALL_SOURCES)})",
     )
     parser.add_argument("--limit", type=int, default=12, help="Max new offers to tailor per run")
     parser.add_argument(
@@ -956,7 +1032,34 @@ def main() -> int:
         default="",
         help="Skip scraping and retry existing offers in applications.csv by status",
     )
+    parser.add_argument(
+        "--quality",
+        nargs="+",
+        choices=["high", "medium", "low"],
+        default=None,
+        help="Filter offers by desirability tier (high, medium, low)",
+    )
     args = parser.parse_args()
+    retry_sources = set(args.sources) if args.sources else None
+    quality_filter = set(args.quality) if args.quality else None
+    if args.sources is None:
+        args.sources = ["linkedin", "hellowork"]
+
+    source_domains = {
+        "linkedin": ("linkedin.com",),
+        "hellowork": ("hellowork.com",),
+        "wttj": ("welcometothejungle.com",),
+        "jobteaser": ("jobteaser.com",),
+        "indeed": ("indeed.com",),
+        "apec": ("apec.fr",),
+        "meteojob": ("meteojob.com",),
+    }
+
+    def _url_in_sources(offer_url: str, allowed: Optional[Set[str]]) -> bool:
+        if not allowed:
+            return True
+        low = (offer_url or "").lower()
+        return any(dom in low for s in allowed for dom in source_domains.get(s, ()))
 
     queue_metas: List[Path] = []
     if args.retry:
@@ -964,12 +1067,24 @@ def main() -> int:
         if APPS_CSV_PATH.exists():
             with APPS_CSV_PATH.open("r", newline="", encoding="utf-8") as f:
                 for r in csv.DictReader(f):
-                    if (r.get("Status") or "").strip().lower() in target_statuses and r.get("CV_PDF"):
+                    tier, _ = classify_offer_quality(
+                        r.get("Role", ""),
+                        matched_keywords=r.get("Matched_Keywords", ""),
+                        url=r.get("URL", ""),
+                    )
+                    if (
+                        (r.get("Status") or "").strip().lower() in target_statuses
+                        and r.get("CV_PDF")
+                        and _url_in_sources(r.get("URL", ""), retry_sources)
+                        and (not quality_filter or tier in quality_filter)
+                    ):
                         mp = WORKSPACE / Path(r["CV_PDF"]).parent / "metadata.json"
                         if mp.exists() and mp not in queue_metas:
                             queue_metas.append(mp)
         queue_metas = queue_metas[: args.limit]
-        print(f"[*] Retrying {len(queue_metas)} existing '{args.retry}' offer(s)...")
+        src_note = f" (sources: {', '.join(sorted(retry_sources))})" if retry_sources else ""
+        q_note = f" (quality: {', '.join(sorted(quality_filter))})" if quality_filter else ""
+        print(f"[*] Retrying {len(queue_metas)} existing '{args.retry}' offer(s){src_note}{q_note}...")
     else:
         existing_urls, existing_keys = load_existing_offers()
         raw_offers: List[Dict[str, str]] = []
@@ -1090,16 +1205,29 @@ def main() -> int:
                     fetched_details.append(det)
 
         detailed_offers: List[Dict[str, Any]] = []
+        dup_count = 0
+        excl_count = 0
+        qual_drop = 0
         for det in fetched_details:
             dedup_key = normalize_company_role_key(det["company"], det["role"])
             if dedup_key in existing_keys:
+                dup_count += 1
                 print(f"  [-] Skipping cross-site duplicate: {det['role']} @ {det['company']}")
                 continue
             sc = score_offer(det["role"], det["location"], det["text"])
-            if sc >= 0:
-                existing_keys.add(dedup_key)
-                det["score"] = sc
-                detailed_offers.append(det)
+            if sc < 0:
+                excl_count += 1
+                continue
+            tier, _ = classify_offer_quality(det["role"], location=det["location"], description=det["text"], url=det.get("url", ""))
+            if quality_filter and tier not in quality_filter:
+                qual_drop += 1
+                continue
+            existing_keys.add(dedup_key)
+            det["score"] = sc
+            det["quality"] = tier
+            detailed_offers.append(det)
+
+        print(f"[*] Filter summary: {len(fetched_details)} fetched -> {dup_count} duplicates, {excl_count} excluded (title/Bac+5), {qual_drop} filtered by quality, {len(detailed_offers)} eligible.")
 
         detailed_offers.sort(key=lambda x: -x["score"])
         selected = detailed_offers[: args.limit]

@@ -75,6 +75,8 @@
     <div><span id="lbl-applied">Sent</span>: <strong id="st-applied">0</strong></div>
     <div><span id="lbl-drafted">Drafts</span>: <strong id="st-drafted">0</strong></div>
     <div><span id="lbl-manual">Portal</span>: <strong id="st-manual">0</strong></div>
+    <div><span id="lbl-login">Login</span>: <strong id="st-login">0</strong></div>
+    <div><span id="lbl-other">Closed</span>: <strong id="st-other">0</strong></div>
   </div>
 </aside>
 
@@ -95,6 +97,17 @@
     <section id="tab-tracker" class="hidden">
       <div class="card row">
         <input id="filter-q" oninput="renderTable()" style="flex:1; min-width:220px;">
+        <select id="filter-source" onchange="renderTable()">
+          <option value="" id="opt-all-src">All sources</option>
+          <option value="LinkedIn">LinkedIn</option>
+          <option value="HelloWork">HelloWork</option>
+          <option value="WTTJ">WTTJ</option>
+          <option value="JobTeaser">JobTeaser</option>
+          <option value="Indeed">Indeed</option>
+          <option value="APEC">APEC</option>
+          <option value="Meteojob">Meteojob</option>
+          <option value="Spontaneous">Spontaneous</option>
+        </select>
         <select id="filter-status" onchange="renderTable()">
           <option value="" id="opt-all"></option>
           <option value="drafted">drafted</option>
@@ -104,6 +117,13 @@
           <option value="expired">expired</option>
           <option value="skipped">skipped</option>
         </select>
+        <select id="filter-quality" onchange="renderTable()">
+          <option value="">All qualities</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+        <button class="secondary" id="btn-skip-filtered" onclick="skipFilteredRows()"></button>
         <button class="secondary" id="btn-refresh" onclick="loadApps()"></button>
         <a href="/api/report" target="_blank"><button class="secondary" id="btn-report"></button></a>
       </div>
@@ -113,6 +133,7 @@
             <tr>
               <th id="th-date"></th>
               <th id="th-source"></th>
+              <th>Quality</th>
               <th id="th-company"></th>
               <th id="th-role"></th>
               <th id="th-status"></th>
@@ -152,6 +173,14 @@
             <button class="pill" id="pill-mj" onclick="this.classList.toggle('active')">Meteojob</button>
           </div>
         </div>
+        <div class="row" style="margin-bottom:14px; gap:8px;">
+          <span style="font-size:12px; color:var(--muted);">Quality:</span>
+          <div class="pill-group" id="fetch-quality-group">
+            <button class="pill active" data-q="high" onclick="this.classList.toggle('active')">High</button>
+            <button class="pill active" data-q="medium" onclick="this.classList.toggle('active')">Medium</button>
+            <button class="pill active" data-q="low" onclick="this.classList.toggle('active')">Low</button>
+          </div>
+        </div>
         <button class="primary" id="btn-fetch" onclick="launchFetch()"></button>
       </div>
       <div class="card">
@@ -184,12 +213,50 @@
             <button class="pill active" id="pill-skip" onclick="this.classList.toggle('active')"><span id="lbl-skip-ext"></span></button>
           </div>
         </div>
+        <div class="row" style="margin-bottom:12px; gap:8px;">
+          <span id="lbl-apply-platforms" style="font-size:12px; color:var(--muted);">Platforms:</span>
+          <div class="pill-group" id="apply-sources-group">
+            <button class="pill active" data-src="linkedin" onclick="toggleApplySource(this)">LinkedIn</button>
+            <button class="pill active" data-src="hellowork" onclick="toggleApplySource(this)">HelloWork</button>
+            <button class="pill active" data-src="wttj" onclick="toggleApplySource(this)">WTTJ</button>
+            <button class="pill active" data-src="jobteaser" onclick="toggleApplySource(this)">JobTeaser</button>
+            <button class="pill active" data-src="indeed" onclick="toggleApplySource(this)">Indeed</button>
+            <button class="pill active" data-src="apec" onclick="toggleApplySource(this)">APEC</button>
+            <button class="pill active" data-src="meteojob" onclick="toggleApplySource(this)">Meteojob</button>
+          </div>
+          <button class="secondary" onclick="toggleAllApplySources(true)" style="padding:4px 9px; font-size:11px;">All</button>
+          <button class="secondary" onclick="toggleAllApplySources(false)" style="padding:4px 9px; font-size:11px;">None</button>
+        </div>
+        <div class="row" style="margin-bottom:12px; gap:8px;">
+          <span style="font-size:12px; color:var(--muted);">Quality:</span>
+          <div class="pill-group" id="apply-quality-group">
+            <button class="pill active" data-q="high" onclick="toggleApplyQuality(this)">High</button>
+            <button class="pill active" data-q="medium" onclick="toggleApplyQuality(this)">Medium</button>
+            <button class="pill active" data-q="low" onclick="toggleApplyQuality(this)">Low</button>
+          </div>
+        </div>
         <div class="row" style="gap:10px;">
           <button class="primary" id="btn-retry-drafted" onclick="runRetry('drafted')"></button>
           <button class="secondary" id="btn-retry-manual" onclick="runRetry('manual_portal')"></button>
-          <button class="secondary" id="btn-mail" onclick="runMail()"></button>
+          <button class="secondary" id="btn-retry-login" onclick="runRetry('needs_login')"></button>
+          <button class="secondary" id="btn-mail" disabled style="opacity:0.45; cursor:not-allowed;"></button>
         </div>
         <div id="apply-hint" style="font-size:12px; color:var(--muted); margin-top:10px;"></div>
+      </div>
+
+      <div class="card hidden" id="manual-current-card" style="border-color: var(--accent);">
+        <div class="row" style="justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-size:11px; color:var(--accent); font-weight:700; text-transform:uppercase;" id="mc-progress">Manual Review</div>
+            <div style="font-size:15px; font-weight:600; margin-top:2px;" id="mc-title">—</div>
+          </div>
+          <div class="row" style="gap:8px;">
+            <button class="secondary" onclick="openManualPreview()">View CV &amp; LM</button>
+            <button class="secondary" onclick="manualAction('finder')">Open Finder</button>
+            <button class="primary" onclick="manualAction('applied')">Mark Applied</button>
+            <button class="secondary" onclick="manualAction('skip')" style="border-color:var(--amber); color:var(--amber);">Skip</button>
+          </div>
+        </div>
       </div>
 
       <div class="card">
@@ -224,12 +291,35 @@
 
     <!-- PROFILE TAB -->
     <section id="tab-profile" class="hidden">
+      <div class="card">
+        <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+          <div>
+            <strong>Search &amp; Quality Preferences</strong>
+            <span style="font-size:12px; color:var(--muted); margin-left:8px;">(config/profile.json → search &amp; preferences)</span>
+          </div>
+          <div class="row" style="gap:8px;">
+            <input type="file" id="resume-pdf-input" accept=".pdf" class="hidden" onchange="importResumePdf(this)">
+            <button class="secondary" onclick="document.getElementById('resume-pdf-input').click()">Import from Resume (PDF)</button>
+            <button class="primary" onclick="savePreferences()">Save &amp; Reclassify</button>
+          </div>
+        </div>
+        <div id="pref-save-status" style="font-size:12px; color:var(--accent); margin-bottom:8px;"></div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:10px;">
+          <div><div style="font-size:11px; color:var(--muted); margin-bottom:4px;">Search Queries (comma-separated)</div><input id="pref-queries" style="width:100%;"></div>
+          <div><div style="font-size:11px; color:var(--muted); margin-bottom:4px;">Target Roles (+30)</div><input id="pref-target-roles" style="width:100%;"></div>
+          <div><div style="font-size:11px; color:var(--muted); margin-bottom:4px;">Avoid Roles (-40)</div><input id="pref-avoid-roles" style="width:100%;"></div>
+          <div><div style="font-size:11px; color:var(--muted); margin-bottom:4px;">Preferred Close Locations (+25)</div><input id="pref-pref-locs" style="width:100%;"></div>
+          <div><div style="font-size:11px; color:var(--muted); margin-bottom:4px;">IDF Locations (+12)</div><input id="pref-idf-locs" style="width:100%;"></div>
+          <div><div style="font-size:11px; color:var(--muted); margin-bottom:4px;">Work Types / Remote / Hybrid (+15)</div><input id="pref-work-types" style="width:100%;"></div>
+          <div><div style="font-size:11px; color:var(--muted); margin-bottom:4px;">Avoid Far Locations (-30)</div><input id="pref-avoid-locs" style="width:100%;"></div>
+        </div>
+      </div>
       <div class="card row" style="justify-content:space-between;">
         <div><strong id="lbl-master"></strong></div>
         <button class="primary" id="btn-sync" onclick="runSync()"></button>
       </div>
       <div class="card">
-        <pre class="log" id="master-md" style="height:65vh;"></pre>
+        <pre class="log" id="master-md" style="height:48vh;"></pre>
       </div>
     </section>
 
@@ -295,6 +385,15 @@
         <button class="secondary" id="g-s2-btn" onclick="runSync()"></button>
       </div>
       <div class="card">
+        <h4 id="g-s2b-t" style="margin-top:0;">Step 3 — Set Profile, Preferences &amp; Quality Rules</h4>
+        <p id="g-s2b-d" style="color:var(--muted);">Auto-fill your profile from a Resume PDF (or edit target roles, close locations, remote/hybrid &amp; avoid lists in Profile &amp; GitHub) so StageBot scores offers into High / Medium / Low.</p>
+        <div class="row" style="gap:8px;">
+          <button class="secondary" onclick="showTab('profile', document.getElementById('nav-profile'))">Open Preferences &amp; Profile</button>
+          <button class="secondary" onclick="document.getElementById('resume-pdf-input').click()">Import Resume (PDF)</button>
+          <span id="g-resume-status" style="font-size:12px; color:var(--accent);"></span>
+        </div>
+      </div>
+      <div class="card">
         <h4 id="g-s3-t" style="margin-top:0;"></h4>
         <p id="g-s3-d" style="color:var(--muted);"></p>
         <button class="secondary" id="g-s3-btn" onclick="showTab('fetch', document.getElementById('nav-fetch'))"></button>
@@ -317,9 +416,9 @@
 const I18N = {
   fr: {
     navGuide: "1. Intro & Démarrer", navFetch: "2. Chercher Offres", navApply: "3. Postuler", navTracker: "4. Candidatures", navPreview: "5. Aperçu CV & LM", navProfile: "6. Profil & GitHub",
-    total: "Total", applied: "Envoyés", drafted: "Brouillons", manual: "Portail",
+    total: "Total", applied: "Envoyés", drafted: "Brouillons", manual: "Portail", needsLogin: "Connexion", other: "Expirés/Ign.",
     report: "Justificatif Université (IUT)", refresh: "Actualiser",
-    filterPlaceholder: "Filtrer entreprise, poste, mot-clé...", allStatuses: "Tous les statuts",
+    filterPlaceholder: "Filtrer entreprise, poste, mot-clé...", allStatuses: "Tous les statuts", allSources: "Toutes sources", skipFiltered: "Ignorer filtrés",
     thDate: "Date", thSource: "Source", thCompany: "Entreprise", thRole: "Poste", thStatus: "Statut", thDocs: "Documents", thActions: "Actions",
     viewPdf: "Voir PDF", applyBtn: "Postuler",
     fetchHeading: "Récupérer de nouvelles offres (sans postuler)",
@@ -328,8 +427,8 @@ const I18N = {
     applyModeTitle: "Mode d'envoi",
     skipExternal: "Ignorer portails externes",
     mAuto: "Auto-Apply", mApply: "Revue Manuelle",
-    btnMail: "Générer Emails Spontanés",
-    retryDrafted: "Postuler aux Brouillons", retryManual: "Réessayer Portails Manuels",
+    btnMail: "Générer Emails Spontanés (Indisponible)",
+    retryDrafted: "Postuler aux Brouillons", retryManual: "Réessayer Portails Manuels", retryLogin: "Réessayer Connexions", platforms: "Plateformes :",
     applyHint: "Les brouillons récents et les emails spontanés sont tous enregistrés dans data/applications.csv.",
     logs: "Logs en direct", idle: "Inactif", running: "En cours...", done: "Terminé", ready: "Prêt.",
     previewEmpty: "Sélectionnez une candidature dans l'onglet Candidatures",
@@ -355,9 +454,9 @@ const I18N = {
   },
   es: {
     navGuide: "1. Intro y Guía", navFetch: "2. Buscar Ofertas", navApply: "3. Postular", navTracker: "4. Candidaturas", navPreview: "5. Vista CV y Carta", navProfile: "6. Perfil y GitHub",
-    total: "Total", applied: "Enviadas", drafted: "Borradores", manual: "Portal",
+    total: "Total", applied: "Enviadas", drafted: "Borradores", manual: "Portal", needsLogin: "Login", other: "Cerradas",
     report: "Justificante Universidad (IUT)", refresh: "Actualizar",
-    filterPlaceholder: "Filtrar empresa, puesto, palabra clave...", allStatuses: "Todos los estados",
+    filterPlaceholder: "Filtrar empresa, poste, palabra clave...", allStatuses: "Todos los estados", allSources: "Todas las fuentes", skipFiltered: "Omitir filtrados",
     thDate: "Fecha", thSource: "Fuente", thCompany: "Empresa", thRole: "Puesto", thStatus: "Estado", thDocs: "Documentos", thActions: "Acciones",
     viewPdf: "Ver PDF", applyBtn: "Postular",
     fetchHeading: "Buscar nuevas ofertas (solo guardar)",
@@ -366,8 +465,8 @@ const I18N = {
     applyModeTitle: "Modo de envío",
     skipExternal: "Omitir portales externos",
     mAuto: "Auto-Postular", mApply: "Revisión Manual",
-    btnMail: "Generar Emails Espontáneos",
-    retryDrafted: "Postular a Borradores", retryManual: "Reintentar Portales Manuales",
+    btnMail: "Emails Espontáneos (No disponible)",
+    retryDrafted: "Postular a Borradores", retryManual: "Reintentar Portales Manuales", retryLogin: "Reintentar Login", platforms: "Plataformas:",
     applyHint: "Tanto las ofertas guardadas como los emails espontáneos se registran en data/applications.csv.",
     logs: "Registros en vivo", idle: "Inactivo", running: "Ejecutando...", done: "Finalizado", ready: "Listo.",
     previewEmpty: "Selecciona una candidatura en la pestaña Candidaturas",
@@ -393,9 +492,9 @@ const I18N = {
   },
   en: {
     navGuide: "1. Intro & Guide", navFetch: "2. Fetch Offers", navApply: "3. Apply", navTracker: "4. Applications", navPreview: "5. CV & Letter Preview", navProfile: "6. Profile & GitHub",
-    total: "Total", applied: "Applied", drafted: "Drafts", manual: "Portal",
+    total: "Total", applied: "Applied", drafted: "Drafts", manual: "Portal", needsLogin: "Login", other: "Closed/Skip",
     report: "University Proof Report", refresh: "Refresh",
-    filterPlaceholder: "Filter company, role, keyword...", allStatuses: "All statuses",
+    filterPlaceholder: "Filter company, role, keyword...", allStatuses: "All statuses", allSources: "All sources", skipFiltered: "Skip filtered",
     thDate: "Date", thSource: "Source", thCompany: "Company", thRole: "Role", thStatus: "Status", thDocs: "Documents", thActions: "Actions",
     viewPdf: "View PDF", applyBtn: "Apply",
     fetchHeading: "Fetch new offers (scrape & tailor only)",
@@ -404,8 +503,8 @@ const I18N = {
     applyModeTitle: "Apply mode",
     skipExternal: "Skip external portals",
     mAuto: "Auto-Apply", mApply: "Manual Review",
-    btnMail: "Local Spontaneous Emails",
-    retryDrafted: "Apply to Drafts", retryManual: "Retry Manual Portals",
+    btnMail: "Local Spontaneous Emails (Unavailable)",
+    retryDrafted: "Apply to Drafts", retryManual: "Retry Manual Portals", retryLogin: "Retry Needs Login", platforms: "Platforms:",
     applyHint: "All fetched offers and spontaneous emails are logged in data/applications.csv.",
     logs: "Live Logs", idle: "Idle", running: "Running...", done: "Done", ready: "Ready.",
     previewEmpty: "Select an application from the Applications tab",
@@ -461,10 +560,14 @@ function setLang(lang) {
   document.getElementById('lbl-applied').textContent = t.applied;
   document.getElementById('lbl-drafted').textContent = t.drafted;
   document.getElementById('lbl-manual').textContent = t.manual;
+  document.getElementById('lbl-login').textContent = t.needsLogin;
+  document.getElementById('lbl-other').textContent = t.other;
   document.getElementById('btn-report').textContent = t.report;
   document.getElementById('btn-refresh').textContent = t.refresh;
   document.getElementById('filter-q').placeholder = t.filterPlaceholder;
   document.getElementById('opt-all').textContent = t.allStatuses;
+  document.getElementById('opt-all-src').textContent = t.allSources;
+  document.getElementById('btn-skip-filtered').textContent = t.skipFiltered;
   document.getElementById('th-date').textContent = t.thDate;
   document.getElementById('th-source').textContent = t.thSource;
   document.getElementById('th-company').textContent = t.thCompany;
@@ -480,8 +583,8 @@ function setLang(lang) {
   document.getElementById('lbl-m-auto').textContent = t.mAuto;
   document.getElementById('lbl-m-apply').textContent = t.mApply;
   document.getElementById('btn-mail').textContent = t.btnMail;
-  document.getElementById('btn-retry-drafted').textContent = `${t.retryDrafted} (${countsCache.drafted || 0})`;
-  document.getElementById('btn-retry-manual').textContent = `${t.retryManual} (${countsCache.manual_portal || 0})`;
+  document.getElementById('lbl-apply-platforms').textContent = t.platforms;
+  updateApplyButtonCounts();
   document.getElementById('apply-hint').textContent = t.applyHint;
   document.getElementById('lbl-logs-fetch').textContent = t.logs;
   document.getElementById('lbl-logs-apply').textContent = t.logs;
@@ -531,10 +634,12 @@ async function loadApps() {
   document.getElementById('st-applied').textContent = data.counts.applied;
   document.getElementById('st-drafted').textContent = data.counts.drafted;
   document.getElementById('st-manual').textContent = data.counts.manual_portal;
+  document.getElementById('st-login').textContent = data.counts.needs_login || 0;
+  document.getElementById('st-other').textContent = (data.counts.expired || 0) + (data.counts.skipped || 0);
   countsCache = data.counts;
   const t = I18N[currentLang];
-  document.getElementById('btn-retry-drafted').textContent = `${t.retryDrafted} (${countsCache.drafted || 0})`;
-  document.getElementById('btn-retry-manual').textContent = `${t.retryManual} (${countsCache.manual_portal || 0})`;
+  document.getElementById('lbl-apply-platforms').textContent = t.platforms;
+  updateApplyButtonCounts();
   renderTable();
 }
 
@@ -551,21 +656,33 @@ function detectSource(url) {
   return 'Other';
 }
 
+let visibleUrlsCache = [];
+
 function renderTable() {
   const t = I18N[currentLang];
   const q = document.getElementById('filter-q').value.toLowerCase();
   const st = document.getElementById('filter-status').value;
+  const srcFilter = document.getElementById('filter-source').value;
+  const qFilter = document.getElementById('filter-quality').value;
   const tbody = document.getElementById('apps-tbody');
   tbody.innerHTML = '';
+  visibleUrlsCache = [];
   for (const r of allRows) {
     if (st && r.Status !== st) continue;
     const src = detectSource(r.URL);
-    const blob = `${src} ${r.Company} ${r.Role} ${r.Matched_Keywords}`.toLowerCase();
+    if (srcFilter && src !== srcFilter) continue;
+    const qual = (r.Quality || 'medium').toLowerCase();
+    if (qFilter && qual !== qFilter) continue;
+    const blob = `${src} ${qual} ${r.Company} ${r.Role} ${r.Matched_Keywords}`.toLowerCase();
     if (q && !blob.includes(q)) continue;
+    if (r.URL) visibleUrlsCache.push(r.URL);
+    const qColor = qual === 'high' ? 'var(--green)' : (qual === 'medium' ? 'var(--amber)' : 'var(--muted)');
+    const qLabel = qual === 'high' ? 'High' : (qual === 'medium' ? 'Medium' : 'Low');
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td style="color:var(--muted);white-space:nowrap;">${r.Date || ''}</td>
       <td><span style="font-size:11px;padding:2px 7px;border-radius:999px;border:1px solid var(--border);color:var(--muted);">${src}</span></td>
+      <td><span title="Score: ${r.Score ?? ''}" style="font-size:11px;font-weight:600;padding:2px 7px;border-radius:999px;border:1px solid ${qColor};color:${qColor};">${qLabel}</span></td>
       <td><strong>${r.Company || ''}</strong></td>
       <td><a href="${r.URL}" target="_blank" style="color:var(--accent);text-decoration:none;">${r.Role || ''}</a></td>
       <td>
@@ -629,21 +746,117 @@ async function launchFetch() {
   if (indeedOn) sources.push('indeed');
   if (apecOn) sources.push('apec');
   if (mjOn) sources.push('meteojob');
-  if (!sources.length) sources.push('linkedin');
+  if (!queries.length) {
+    alert('Enter at least one search query.');
+    return;
+  }
+  if (!sources.length) {
+    alert('Select at least one platform to fetch from.');
+    return;
+  }
+  const quality = Array.from(document.querySelectorAll('#fetch-quality-group .pill.active')).map(p => p.dataset.q);
+  if (!quality.length) {
+    alert('Select at least one quality tier (High, Medium, Low).');
+    return;
+  }
   await fetch('/api/run', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({action:'search', limit, queries, sources, easy_apply: liOn})
+    body: JSON.stringify({action:'search', limit, queries, sources, quality, easy_apply: liOn})
   });
   pollLogs();
 }
 
+const SOURCE_KEY_MAP = {
+  LinkedIn: 'linkedin',
+  HelloWork: 'hellowork',
+  WTTJ: 'wttj',
+  JobTeaser: 'jobteaser',
+  Indeed: 'indeed',
+  APEC: 'apec',
+  Meteojob: 'meteojob',
+};
+
+function updateApplyButtonCounts() {
+  const t = I18N[currentLang];
+  const selected = new Set(
+    Array.from(document.querySelectorAll('#apply-sources-group .pill.active')).map(p => p.dataset.src)
+  );
+  const selectedQ = new Set(
+    Array.from(document.querySelectorAll('#apply-quality-group .pill.active')).map(p => p.dataset.q)
+  );
+  let drafted = 0, manual = 0, login = 0;
+  for (const r of allRows) {
+    const key = SOURCE_KEY_MAP[detectSource(r.URL)];
+    if (!key || !selected.has(key)) continue;
+    const qual = (r.Quality || 'medium').toLowerCase();
+    if (!selectedQ.has(qual)) continue;
+    const st = (r.Status || '').trim().toLowerCase();
+    if (st === 'drafted') drafted++;
+    else if (st === 'manual_portal') manual++;
+    else if (st === 'needs_login') login++;
+  }
+  document.getElementById('btn-retry-drafted').textContent = `${t.retryDrafted} (${drafted})`;
+  document.getElementById('btn-retry-manual').textContent = `${t.retryManual} (${manual})`;
+  document.getElementById('btn-retry-login').textContent = `${t.retryLogin} (${login})`;
+}
+
+function toggleApplySource(btn) {
+  btn.classList.toggle('active');
+  updateApplyButtonCounts();
+}
+
+function toggleApplyQuality(btn) {
+  btn.classList.toggle('active');
+  updateApplyButtonCounts();
+}
+
+function toggleAllApplySources(on) {
+  document.querySelectorAll('#apply-sources-group .pill').forEach(p => p.classList.toggle('active', on));
+  updateApplyButtonCounts();
+}
+
+async function skipFilteredRows() {
+  if (!visibleUrlsCache.length) {
+    alert('No matching offers to skip.');
+    return;
+  }
+  if (!confirm(`Mark ${visibleUrlsCache.length} filtered offer(s) as 'skipped'?`)) return;
+  await fetch('/api/applications/bulk_status', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({urls: visibleUrlsCache, status: 'skipped'})
+  });
+  await loadApps();
+}
+
 async function runRetry(retry_status) {
-  const skip_external = retry_status === 'manual_portal' ? false : document.getElementById('pill-skip').classList.contains('active');
+  const sources = Array.from(document.querySelectorAll('#apply-sources-group .pill.active')).map(p => p.dataset.src);
+  if (!sources.length) {
+    alert('Select at least one platform.');
+    return;
+  }
+  const quality = Array.from(document.querySelectorAll('#apply-quality-group .pill.active')).map(p => p.dataset.q);
+  if (!quality.length) {
+    alert('Select at least one quality tier (High, Medium, Low).');
+    return;
+  }
+  const selectedSet = new Set(sources);
+  const qualitySet = new Set(quality);
+  const matchingCount = allRows.filter(r => {
+    const key = SOURCE_KEY_MAP[detectSource(r.URL)];
+    const qual = (r.Quality || 'medium').toLowerCase();
+    return key && selectedSet.has(key) && qualitySet.has(qual) && (r.Status || '').trim().toLowerCase() === retry_status;
+  }).length;
+  if (!matchingCount) {
+    alert(`No '${retry_status}' offers match the selected platforms and quality tiers.`);
+    return;
+  }
+  const skip_external = document.getElementById('pill-skip').classList.contains('active');
   await fetch('/api/run', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({action:'retry', retry_status, limit: 200, auto: runMode === 'auto', skip_external})
+    body: JSON.stringify({action:'retry', retry_status, sources, quality, limit: 200, auto: runMode === 'auto', skip_external})
   });
   pollLogs();
 }
@@ -655,6 +868,45 @@ async function runMail() {
     body: JSON.stringify({action:'mail', limit: 5})
   });
   pollLogs();
+}
+
+let manualCurrentCache = null;
+
+async function refreshManualCurrent() {
+  try {
+    const res = await fetch('/api/manual_current');
+    const mc = await res.json();
+    const card = document.getElementById('manual-current-card');
+    if (mc && mc.active) {
+      manualCurrentCache = mc;
+      document.getElementById('mc-progress').textContent = `Manual Review (${mc.index}/${mc.total})`;
+      document.getElementById('mc-title').textContent = `${mc.company} — ${mc.role}`;
+      card.classList.remove('hidden');
+    } else {
+      manualCurrentCache = null;
+      card.classList.add('hidden');
+    }
+  } catch (e) {}
+}
+
+function openManualPreview() {
+  if (!manualCurrentCache) return;
+  previewDocs(
+    encodeURIComponent(manualCurrentCache.company || ''),
+    encodeURIComponent(manualCurrentCache.cv_pdf || ''),
+    encodeURIComponent(manualCurrentCache.lm_pdf || '')
+  );
+}
+
+async function manualAction(action) {
+  await fetch('/api/manual_action', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({action})
+  });
+  if (action === 'skip' || action === 'applied') {
+    setTimeout(() => { loadApps(); refreshManualCurrent(); }, 600);
+  }
 }
 
 async function stopTask() {
@@ -703,21 +955,55 @@ function escapeHtml(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+function formatBailoutMessage(company, detail) {
+  const cleanDetail = detail.split('Locator.click:')[0].trim();
+  let action = '';
+  if (/Login wall detected/i.test(cleanDetail)) {
+    action = 'Action: Click "Open Login Chrome" in Guide (or run ./stage login), sign in, then use Retry Needs Login.';
+  } else if (/Skipped external ATS/i.test(cleanDetail)) {
+    action = 'Action: External portal — switch to Manual Review (with Skip External OFF) or Skip it in Tracker.';
+  } else if (/validation errors/i.test(cleanDetail)) {
+    action = 'Action: Missing/invalid fields shown above — add answers in Q&A & Rules or finish in Manual Review.';
+  } else if (/unanswered required/i.test(cleanDetail)) {
+    action = 'Action: Add these question answers in Tab 7 (Q&A & Rules), then retry.';
+  } else if (/No Next\/Submit button found/i.test(cleanDetail)) {
+    action = 'Action: Form layout not recognized automatically — open in Manual Review to submit.';
+  } else if (/confirmation was not detected/i.test(cleanDetail)) {
+    action = 'Action: Submit was clicked; check debug screenshot or portal — if sent, mark Applied in Tracker.';
+  } else if (/Stuck on step/i.test(cleanDetail)) {
+    action = 'Action: Next button did not advance — check debug screenshot or finish in Manual Review.';
+  } else if (/Tab closed/i.test(cleanDetail)) {
+    action = 'Action: Tab closed during redirect — retry in Manual Review.';
+  }
+  const shortDetail = cleanDetail.replace(/\s*\|\s*Visible buttons:.*$/, '').slice(0, 180);
+  const hintHtml = action ? `<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">${escapeHtml(action)}</div>` : '';
+  return `<strong>${escapeHtml(company)}</strong> — ${escapeHtml(shortDetail)}${hintHtml}`;
+}
+
 function renderCleanLogs(lines) {
   const counts = { applied: 0, manual: 0, tailored: 0, llm: 0, searched: 0 };
   const events = [];
   for (const raw of lines) {
     const line = (raw || '').trim();
-    if (!line || line.startsWith('===') || line.startsWith('---') || line.startsWith('Call log:') || line.startsWith('- waiting for') || line.startsWith('- attempting click') || line.startsWith('× ') || line.startsWith('- element is') || line.startsWith('- scrolling') || line.startsWith('- done scrolling') || line.startsWith('- <div') || line.startsWith('- retrying')) continue;
+    if (!line || line.startsWith('---') || line.startsWith('Call log:') || line.startsWith('- waiting for') || line.startsWith('- attempting click') || line.startsWith('× ') || line.startsWith('- element is') || line.startsWith('- scrolling') || line.startsWith('- done scrolling') || line.startsWith('- <div') || line.startsWith('- retrying')) continue;
 
     let m;
-    if ((m = line.match(/^\[\+\]\s+\[([^\]]+)\]\s+(?:Confirmed|Submitted)\s+->\s+'applied'/))) {
+    if ((m = line.match(/^===\s*Manual Review\s*\[([^\]]+)\]:\s*(.+?)\s*===$/))) {
+      events.push({ cls: 'info', badge: `Step ${m[1]}`, text: `<strong>${escapeHtml(m[2])}</strong> — Opening browser &amp; Finder...` });
+      continue;
+    }
+    if (line.startsWith('===')) continue;
+
+    if ((m = line.match(/^\[\+\]\s+\[([^\]]+)\]\s+(?:Confirmed|Submitted)\s+->\s+'applied'/)) || (m = line.match(/^\[\+\]\s+Confirmed submission for\s+([^!]+)!/))) {
       counts.applied++;
-      events.push({ cls: 'ok', badge: 'Applied', text: m[1] });
+      events.push({ cls: 'ok', badge: 'Applied', text: `<strong>${escapeHtml(m[1])}</strong> — Confirmed &amp; saved as applied.` });
     } else if ((m = line.match(/^\[!\]\s+Bailout\s+\[([^\]]+)\]:\s*(.+)$/))) {
       counts.manual++;
-      const reason = m[2].split('Locator.click:')[0].split('(')[0].trim();
-      events.push({ cls: 'warn', badge: 'Manual', text: `<strong>${escapeHtml(m[1])}</strong> — ${escapeHtml(reason || m[2].slice(0, 90))}` });
+      events.push({ cls: 'warn', badge: 'Needs Action', text: formatBailoutMessage(m[1], m[2]) });
+    } else if ((m = line.match(/^\[\*\]\s+\[([^\]]+)\]\s+Ready — (.+)$/))) {
+      events.push({ cls: 'ok', badge: 'Your Turn', text: `<strong>${escapeHtml(m[1])}</strong> — Form prefilled &amp; PDFs opened in Finder. Review, submit, then close tab (or click Skip / Mark Applied above).` });
+    } else if ((m = line.match(/^\[\*\]\s+\[([^\]]+)\]\s+Marked '([^']+)' from UI/))) {
+      events.push({ cls: 'info', badge: m[2] === 'applied' ? 'Applied' : 'Skipped', text: `<strong>${escapeHtml(m[1])}</strong> — Marked '${escapeHtml(m[2])}', moving to next offer.` });
     } else if ((m = line.match(/^\[LLM:([^\]]+)\]\s+(.+)$/))) {
       counts.llm++;
       events.push({ cls: 'ai', badge: 'AI', text: escapeHtml(m[2]) });
@@ -727,12 +1013,14 @@ function renderCleanLogs(lines) {
     } else if ((m = line.match(/^\[\*\]\s+Searching\s+([^:]+):\s*(.+)$/))) {
       counts.searched++;
       events.push({ cls: 'info', badge: 'Search', text: `${escapeHtml(m[1])}: ${escapeHtml(m[2].replace(/\s*\.\.\.$/, ''))}` });
+    } else if ((m = line.match(/^\[\*\]\s+\[([^\]]+)\]\s+Apply clicked:\s*(\w+)\s*\|\s*Target:\s*(.+)$/))) {
+      events.push({ cls: 'info', badge: 'Form', text: `<strong>${escapeHtml(m[1])}</strong> — Target: ${escapeHtml(m[3])}` });
     } else if ((m = line.match(/^\[\*\]\s+\[([^\]]+)\]\s+Opening\s+(https?:\/\/\S+)/))) {
-      events.push({ cls: 'info', badge: 'Open', text: `<strong>${escapeHtml(m[1])}</strong>` });
+      events.push({ cls: 'info', badge: 'Open', text: `<strong>${escapeHtml(m[1])}</strong> <span style="color:var(--muted);font-size:11px;">(${escapeHtml(m[2].replace(/^https?:\/\/(www\.)?/, '').slice(0, 45))})</span>` });
     } else if (line.startsWith('[+] Done!') || line.includes('Starting:') || line.includes('Finished (exit code') || line.includes('Selected top ') || line.includes('Found ') || line.includes('Retrying ')) {
       events.push({ cls: 'info', badge: 'Info', text: escapeHtml(line.replace(/^\[\*\]\s*|^\[\+\]\s*/, '')) });
     } else if (line.startsWith('[!]')) {
-      events.push({ cls: 'err', badge: 'Warn', text: escapeHtml(line.replace(/^\[!\]\s*/, '').slice(0, 140)) });
+      events.push({ cls: 'err', badge: 'Warn', text: escapeHtml(line.replace(/^\[!\]\s*/, '').slice(0, 160)) });
     }
   }
 
@@ -769,6 +1057,7 @@ async function pollLogs() {
       if (el) { el.textContent = txt; el.scrollTop = el.scrollHeight; }
     }
     renderCleanLogs(lines);
+    refreshManualCurrent();
     for (const id of ['run-state-fetch', 'run-state-apply']) {
       const st = document.getElementById(id);
       if (st) st.textContent = data.running ? t.running : t.done;
@@ -796,7 +1085,75 @@ async function loadProfile() {
   }
   if (p.search && Array.isArray(p.search.queries)) {
     document.getElementById('q-input').value = p.search.queries.join(', ');
+    document.getElementById('pref-queries').value = p.search.queries.join(', ');
   }
+  const pr = p.preferences || {};
+  document.getElementById('pref-target-roles').value = (pr.target_roles || []).join(', ');
+  document.getElementById('pref-avoid-roles').value = (pr.avoid_roles || []).join(', ');
+  document.getElementById('pref-pref-locs').value = (pr.preferred_locations || []).join(', ');
+  document.getElementById('pref-idf-locs').value = (pr.idf_locations || []).join(', ');
+  document.getElementById('pref-work-types').value = (pr.work_types || []).join(', ');
+  document.getElementById('pref-avoid-locs').value = (pr.avoid_locations || []).join(', ');
+}
+
+async function importResumePdf(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const stEl = document.getElementById('pref-save-status');
+  const gEl = document.getElementById('g-resume-status');
+  if (stEl) stEl.textContent = 'Parsing resume...';
+  if (gEl) gEl.textContent = 'Parsing resume...';
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      const res = await fetch('/api/import_resume', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({filename: file.name, pdf_base64: reader.result}),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        const msg = `Imported ${data.updated_fields.length} field(s)${data.used_gemini ? ' via Gemini' : ' via regex'}!`;
+        if (stEl) stEl.textContent = msg;
+        if (gEl) gEl.textContent = msg;
+        await loadProfile();
+        await loadApps();
+      } else {
+        const err = data.error || 'Import failed';
+        if (stEl) stEl.textContent = err;
+        if (gEl) gEl.textContent = err;
+      }
+    } catch (e) {
+      if (stEl) stEl.textContent = 'Import error';
+    }
+    input.value = '';
+  };
+  reader.readAsDataURL(file);
+}
+
+async function savePreferences() {
+  const splitList = (id) => document.getElementById(id).value.split(',').map(s => s.trim()).filter(Boolean);
+  const preferences = {
+    target_roles: splitList('pref-target-roles'),
+    avoid_roles: splitList('pref-avoid-roles'),
+    preferred_locations: splitList('pref-pref-locs'),
+    idf_locations: splitList('pref-idf-locs'),
+    work_types: splitList('pref-work-types'),
+    avoid_locations: splitList('pref-avoid-locs'),
+  };
+  const queries = splitList('pref-queries');
+  if (!queries.length) {
+    alert('Enter at least one search query.');
+    return;
+  }
+  await fetch('/api/preferences', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({preferences, queries}),
+  });
+  document.getElementById('pref-save-status').textContent = 'Saved & reclassified!';
+  await loadProfile();
+  await loadApps();
 }
 
 let qaData = {unanswered: [], form_answers: {}, custom_rules: [], verified_skills: [], builtin_rules: []};

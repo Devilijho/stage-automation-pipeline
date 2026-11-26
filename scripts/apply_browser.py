@@ -17,6 +17,7 @@ Features:
 import argparse
 import asyncio
 import csv
+import fcntl
 import json
 import os
 import re
@@ -38,6 +39,8 @@ UNANSWERED_QUESTIONS_PATH = WORKSPACE / "data" / "unanswered_questions.json"
 LLM_CACHE_PATH = WORKSPACE / "data" / "llm_answer_cache.json"
 CHROME_PROFILE_DIR = WORKSPACE / ".chrome_profile"
 DEBUG_DIR = WORKSPACE / "debug"
+MANUAL_CURRENT_PATH = WORKSPACE / "data" / "manual_current.json"
+MANUAL_SKIP_PATH = WORKSPACE / "data" / ".manual_skip"
 
 
 def _load_project_env(env_path: Path = WORKSPACE / ".env") -> None:
@@ -79,6 +82,9 @@ CONFIRMATION_PHRASES = [
     "application submitted",
     "your application was sent",
     "your application has been submitted",
+    "we have received your application",
+    "received your application",
+    "thank you for your interest",
     "merci pour votre candidature",
     "merci !",
     "merci,",
@@ -357,6 +363,8 @@ def classify_yes_no_question(question: str, verified_skills: Set[str]) -> Option
     # 1. Explicit "No" cases (visa/disability, higher degree than BUT 2, or unverified domains like mobile)
     if any(k in q for k in ("visa", "sponsor", "parrainage", "handicap", "disability")):
         return ("Non", "No")
+    if any(k in q for k in ("fonction publique", "public official", "politically exposed", "membre proche de votre famille")):
+        return ("Non", "No")
     if any(k in q for k in ("receive text", "sms messages", "communities for future")):
         return ("Non", "No")
     if any(k in q for k in (
@@ -411,21 +419,37 @@ def classify_yes_no_question(question: str, verified_skills: Set[str]) -> Option
 def update_tracker_status(url: str, company: str, new_status: str) -> None:
     if not APPS_CSV_PATH.exists():
         return
-    with APPS_CSV_PATH.open("r", newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-    if not rows:
-        return
-    headers = list(rows[0].keys())
-    norm_url = url.strip().rstrip("/").lower()
-    for r in rows:
-        if (norm_url and (r.get("URL") or "").strip().rstrip("/").lower() == norm_url) or (
-            (r.get("Company") or "").strip().lower() == company.lower()
-        ):
-            r["Status"] = new_status
-    with APPS_CSV_PATH.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=headers)
-        writer.writeheader()
-        writer.writerows(rows)
+    APPS_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = APPS_CSV_PATH.parent / ".applications.csv.lock"
+    with lock_path.open("w", encoding="utf-8") as lock_f:
+        fcntl.flock(lock_f, fcntl.LOCK_EX)
+        try:
+            with APPS_CSV_PATH.open("r", newline="", encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
+            if not rows:
+                return
+            headers = list(rows[0].keys())
+            norm_url = (url or "").strip().rstrip("/").lower()
+            updated = False
+            for r in rows:
+                row_url = (r.get("URL") or "").strip().rstrip("/").lower()
+                if norm_url:
+                    matched = row_url == norm_url
+                else:
+                    matched = (r.get("Company") or "").strip().lower() == (company or "").strip().lower()
+                if not matched:
+                    continue
+                if (r.get("Status") or "").strip().lower() == "applied" and new_status != "applied":
+                    continue
+                r["Status"] = new_status
+                updated = True
+            if updated:
+                with APPS_CSV_PATH.open("w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=headers)
+                    writer.writeheader()
+                    writer.writerows(rows)
+        finally:
+            fcntl.flock(lock_f, fcntl.LOCK_UN)
 
 
 def detect_ats_provider(url: str) -> str:
@@ -474,11 +498,17 @@ async def accept_cookies_if_present(page: Page) -> bool:
         "#onetrust-accept-btn-handler",
         "#axeptio_btn_acceptAll",
         "#tarteaucitronPersonalize2",
+        "[data-testid='uc-accept-all-button']",
         "button:has-text('Tout accepter')",
         "button:has-text('Accepter et continuer')",
         "button:has-text('Accepter tout')",
         "button:has-text(\"J'accepte\")",
         "button:has-text('Accepter')",
+        "button:has-text('Accept All')",
+        "button:has-text('Accept all')",
+        "button:has-text('Accept cookies')",
+        "button:has-text('Accept')",
+        "button:has-text('I agree')",
         "[aria-label='Tout accepter']",
         "[aria-label='Accept all']",
     ]
@@ -495,10 +525,10 @@ async def accept_cookies_if_present(page: Page) -> bool:
     for frame in page.frames:
         if frame == page.main_frame:
             continue
-        for sel in selectors[:6]:
+        for sel in selectors:
             try:
                 loc = frame.locator(sel).first
-                if await loc.is_visible(timeout=400):
+                if await loc.is_visible(timeout=350):
                     await loc.click()
                     await page.wait_for_timeout(300)
                     return True
@@ -536,18 +566,34 @@ async def click_apply_and_follow_redirect(page: Page) -> Tuple[Page, bool]:
         await new_page.wait_for_timeout(1000)
         await accept_cookies_if_present(new_page)
         for sub_sel in [
-            "a:has-text('Apply for this job')",
-            "a:has-text('Postuler à ce poste')",
-            "button:has-text('Apply for this job')",
-            "button:has-text('Postuler à ce poste')",
-            "a.postings-btn[href*='/apply']",
+            "a:has-text('Apply for this job'):visible",
+            "a:has-text('Postuler à ce poste'):visible",
+            "button:has-text('Apply for this job'):visible",
+            "button:has-text('Postuler à ce poste'):visible",
+            "button:has-text('Postulez maintenant'):visible",
+            "a:has-text('Postulez maintenant'):visible",
+            "button:has-text('Postuler maintenant'):visible",
+            "a:has-text('Postuler maintenant'):visible",
+            "button:has-text('Apply Now'):visible",
+            "a:has-text('Apply Now'):visible",
+            "button:has-text('APPLY'):visible",
+            "a:has-text('APPLY'):visible",
+            "a.postings-btn[href*='/apply']:visible",
+            "button[data-testid*='apply' i]:visible",
+            "a[data-testid*='apply' i]:visible",
         ]:
             try:
                 sub_btn = new_page.locator(sub_sel).first
                 if await sub_btn.is_visible(timeout=1000):
-                    await sub_btn.click()
-                    await new_page.wait_for_load_state("domcontentloaded", timeout=12000)
+                    try:
+                        async with new_page.expect_popup(timeout=2500) as sub_pop:
+                            await sub_btn.click()
+                        new_page = await sub_pop.value
+                        await new_page.wait_for_load_state("domcontentloaded", timeout=12000)
+                    except PlaywrightTimeout:
+                        await new_page.wait_for_load_state("domcontentloaded", timeout=12000)
                     await new_page.wait_for_timeout(800)
+                    await accept_cookies_if_present(new_page)
                     break
             except Exception:
                 continue
@@ -563,18 +609,32 @@ async def click_apply_and_follow_redirect(page: Page) -> Tuple[Page, bool]:
                     continue
 
                 initial_url = page.url
+                is_easy_apply_sel = ("jobs-apply-button" in sel) or ("easy apply" in sel.lower()) or ("candidature simplifiée" in sel.lower())
+                if is_easy_apply_sel:
+                    await loc.click()
+                    await page.wait_for_timeout(1200)
+                    return page, True
+
                 before_pages = list(page.context.pages)
                 try:
-                    async with page.expect_popup(timeout=6000) as popup_info:
+                    async with page.expect_popup(timeout=5000) as popup_info:
                         await loc.click()
                     new_page = await popup_info.value
                     return await _handle_new_page(new_page), True
                 except PlaywrightTimeout:
                     await page.wait_for_timeout(1200)
-                    # Check if a new tab opened in context.pages outside expect_popup
-                    new_tabs = [p for p in page.context.pages if p not in before_pages and not p.is_closed()]
-                    if new_tabs:
-                        return await _handle_new_page(new_tabs[-1]), True
+                    # Only adopt a newly opened tab whose opener is THIS page (never steal another worker's tab)
+                    owned_tabs = []
+                    for p in page.context.pages:
+                        if p in before_pages or p.is_closed():
+                            continue
+                        try:
+                            if await p.opener() == page:
+                                owned_tabs.append(p)
+                        except Exception:
+                            continue
+                    if owned_tabs:
+                        return await _handle_new_page(owned_tabs[-1]), True
                     if page.url != initial_url:
                         await accept_cookies_if_present(page)
                     return page, True
@@ -712,7 +772,10 @@ async def get_human_question_text(page: Page, el, exclude_texts: Optional[List[s
 
 async def get_form_root(page: Page):
     try:
-        modal = page.locator(".jobs-easy-apply-modal, div[role='dialog'][aria-modal='true']").first
+        ea_modal = page.locator(".jobs-easy-apply-modal").first
+        if await ea_modal.count() > 0 and await ea_modal.is_visible(timeout=400):
+            return ea_modal
+        modal = page.locator("div[role='dialog'][aria-modal='true']").first
         if await modal.count() > 0 and await modal.is_visible(timeout=400):
             return modal
     except Exception:
@@ -737,6 +800,64 @@ async def get_form_roots(page: Page) -> List[Tuple[Any, Any]]:
     return roots
 
 
+async def _commit_autocomplete_if_open(page: Page, el, is_location: bool = False) -> None:
+    """If an input opened a typeahead/autocomplete dropdown (e.g. LinkedIn Location), pick the first option or dismiss it."""
+    try:
+        is_combo = is_location or (await el.get_attribute("role") == "combobox") or bool(await el.get_attribute("aria-autocomplete"))
+        if not is_combo:
+            return
+        opt_sel = ".basic-typeahead__selectable:visible, .artdeco-typeahead__result:visible, [role='listbox'] [role='option']:visible"
+        opt_fr = page.locator(f"{opt_sel}:has-text('France')").first
+        opt_any = page.locator(opt_sel).first
+        try:
+            await opt_any.wait_for(state="visible", timeout=1400)
+        except Exception:
+            pass
+        if await opt_fr.count() > 0 and await opt_fr.is_visible(timeout=300):
+            await opt_fr.click()
+            await page.wait_for_timeout(250)
+            return
+        if await opt_any.count() > 0 and await opt_any.is_visible(timeout=300):
+            await opt_any.click()
+            await page.wait_for_timeout(250)
+            return
+        if is_location and await opt_any.count() > 0:
+            await el.press("ArrowDown")
+            await page.wait_for_timeout(150)
+            await el.press("Enter")
+            await page.wait_for_timeout(150)
+    except Exception:
+        pass
+
+
+async def _has_country_code_select(root: Any) -> bool:
+    """Detect whether the form already has a separate phone country-code dropdown (e.g. France (+33))."""
+    try:
+        sels = root.locator("select:visible")
+        for i in range(await sels.count()):
+            s = sels.nth(i)
+            val = (await s.input_value() or "").lower()
+            txt = ""
+            try:
+                txt = (await s.locator("option:checked").first.inner_text() or "").lower()
+            except Exception:
+                pass
+            if "+33" in val or "+33" in txt or "france (+33)" in txt:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _local_fr_phone(phone: str) -> str:
+    digits = re.sub(r"\D+", "", phone or "")
+    if digits.startswith("33") and len(digits) == 11:
+        return "0" + digits[2:]
+    if len(digits) == 9 and digits[0] in ("6", "7"):
+        return "0" + digits
+    return phone
+
+
 async def fill_matching_fields(page: Page, answers: Dict[str, str]) -> List[str]:
     field_rules = [
         (["prénom", "prenom", "first name", "firstname", "first_name", "fname"], answers["prenom"]),
@@ -744,6 +865,7 @@ async def fill_matching_fields(page: Page, answers: Dict[str, str]) -> List[str]
         (["full name", "nom complet"], answers["nom_complet"]),
         (["e-mail", "email", "courriel", "mail"], answers["email"]),
         (["téléphone", "telephone", "phone", "mobile", "tel", "06 ", "07 "], answers["telephone"]),
+        (["code postal", "postal code", "postalcode", "codepostal", "zip"], "91440"),
         (["ville", "city", "localisation", "location"], answers["ville"]),
         (["école", "ecole", "school", "université", "university"], answers["ecole"]),
         (["niveau", "level", "études", "diplôme"], answers["niveau"]),
@@ -755,6 +877,7 @@ async def fill_matching_fields(page: Page, answers: Dict[str, str]) -> List[str]
 
     filled: List[str] = []
     for doc_ctx, root in await get_form_roots(page):
+        has_cc = await _has_country_code_select(root)
         inputs = root.locator("input:visible, textarea:visible")
         count = await inputs.count()
         for i in range(count):
@@ -763,13 +886,27 @@ async def fill_matching_fields(page: Page, answers: Dict[str, str]) -> List[str]
                 itype = (await el.get_attribute("type") or "text").lower()
                 if itype in {"hidden", "file", "submit", "button", "checkbox", "radio", "search"}:
                     continue
-                if (await el.input_value() or "").strip():
-                    continue
+                cur_val = (await el.input_value() or "").strip()
                 hint = await get_label_text(doc_ctx, el)
+                is_phone_field = any(p in hint for p in ("téléphone", "telephone", "phone", "mobile", "tel"))
+                if cur_val:
+                    cur_digits = re.sub(r"\D+", "", cur_val)
+                    if has_cc and is_phone_field and (cur_val.startswith("+33") or (len(cur_digits) == 9 and cur_digits[0] in ("6", "7"))):
+                        local_num = _local_fr_phone(cur_val)
+                        await el.fill(local_num)
+                        await el.press("Tab")
+                        filled.append(f"telephone(local) -> {local_num}")
+                    continue
                 for patterns, value in field_rules:
+                    if patterns[0] == "nom" and any(bad in hint for bad in ("voie", "adresse", "address", "entreprise", "société", "preferred", "préféré")):
+                        continue
                     if any(p in hint for p in patterns):
-                        await el.fill(value)
-                        filled.append(f"{patterns[0]} -> {value}")
+                        write_val = _local_fr_phone(value) if (has_cc and patterns[0] == "téléphone") else value
+                        await el.fill(write_val)
+                        await _commit_autocomplete_if_open(page, el, is_location=(patterns[0] == "ville"))
+                        if patterns[0] == "téléphone":
+                            await el.press("Tab")
+                        filled.append(f"{patterns[0]} -> {write_val}")
                         break
             except Exception:
                 continue
@@ -954,6 +1091,33 @@ async def answer_common_questions(
     return answered
 
 
+async def _prune_blank_linkedin_experience(page: Page) -> bool:
+    """If LinkedIn Easy Apply opened a blank Work Experience card with empty Month/Year dates, delete it instead of inventing dates."""
+    try:
+        del_btn = page.locator("button:has-text('Delete experience'):visible, button:has-text('Supprimer l’expérience'):visible").first
+        if await del_btn.count() == 0 or not await del_btn.is_visible(timeout=250):
+            return False
+        sels = page.locator(".jobs-easy-apply-modal select:visible, div[role='dialog'] select:visible")
+        has_empty_date = False
+        for i in range(await sels.count()):
+            cur = (await sels.nth(i).input_value() or "").strip().lower()
+            txt = ""
+            try:
+                txt = (await sels.nth(i).locator("option:checked").first.inner_text() or "").strip().lower()
+            except Exception:
+                pass
+            if cur in ("", "month", "year", "mois", "année") or txt in ("month", "year", "mois", "année"):
+                has_empty_date = True
+                break
+        if has_empty_date:
+            await del_btn.click()
+            await page.wait_for_timeout(400)
+            return True
+    except Exception:
+        pass
+    return False
+
+
 async def _answer_common_questions_in_root(
     page: Page,
     doc_ctx: Any,
@@ -979,8 +1143,10 @@ async def _answer_common_questions_in_root(
                 if (await el.input_value() or "").strip():
                     continue
                 q = await get_label_text(doc_ctx, el)
+                human_q_pre = await get_human_question_text(doc_ctx, el)
+                q_all = f"{q} {human_q_pre}".lower()
                 if ("search" in q and "job" not in q) or any(
-                    skip in q for skip in ("mots clés", "mots-clés", "rechercher")
+                    skip in q_all for skip in ("mots clés", "mots-clés", "rechercher")
                 ):
                     continue
                 is_num = itype == "number" or "numeric" in (await el.get_attribute("inputmode") or "")
@@ -1014,7 +1180,7 @@ async def _answer_common_questions_in_root(
                         f"Opérationnel en C/C++, TypeScript, Linux, Docker et SQL, je serais ravi de rejoindre votre équipe. "
                         f"Cordialement, {answers.get('nom_complet', 'Santiago FUENTES LLANOS')}."
                     )
-                elif any(k in q for k in ("code postal", "postal code", "zip")):
+                elif any(k in q_all for k in ("code postal", "postal code", "postalcode", "codepostal", "zip")):
                     val = "91440"
                 elif any(k in q for k in ("adresse électronique", "e-mail", "email")):
                     val = answers.get("email", "")
@@ -1061,6 +1227,7 @@ async def _answer_common_questions_in_root(
 
                 if val:
                     await el.fill(val)
+                    await _commit_autocomplete_if_open(page, el, is_location=any(k in q for k in ("ville", "city", "localisation", "location")))
                     answered.append(f"input -> {val[:30]}")
                 else:
                     human_q = await get_human_question_text(doc_ctx, el)
@@ -1086,9 +1253,15 @@ async def _answer_common_questions_in_root(
             sel = selects.nth(i)
             try:
                 cur = (await sel.input_value() or "").strip()
-                if cur and cur.lower() not in {"select an option", "sélectionner une option", ""}:
+                cur_txt = ""
+                try:
+                    cur_txt = (await sel.locator("option:checked").first.inner_text() or "").strip().lower()
+                except Exception:
+                    pass
+                placeholder_vals = {"", "select an option", "sélectionner une option", "veuillez sélectionner", "please select", "choisir...", "--", "select"}
+                if cur and cur.lower() not in placeholder_vals and cur_txt not in placeholder_vals:
                     continue
-                q = await get_label_text(doc_ctx, sel)
+                q = f"{await get_label_text(doc_ctx, sel)} {await get_human_question_text(doc_ctx, sel)}".lower()
                 opts = [await o.inner_text() for o in await sel.locator("option").all()]
                 opts = [o.strip() for o in opts if o.strip()]
                 clean_opts = [
@@ -1105,9 +1278,13 @@ async def _answer_common_questions_in_root(
                     matched_opt = next((o for o in clean_opts if saved_val.lower() in o.lower()), None)
                 if not matched_opt:
                     if any(k in q for k in ("département", "departement")):
-                        targets: Tuple[str, ...] = ("Essonne",)
+                        targets: Tuple[str, ...] = ("Essonne", "91 -", "91")
+                    elif any(k in q for k in ("pays", "country", "résidence", "residence")):
+                        targets = ("France",)
+                    elif any(k in q for k in ("genre", "gender", "sexe")):
+                        targets = ("Je préfère ne pas répondre", "Prefer not to", "Ne souhaite pas", "Homme", "Male")
                     elif any(k in q for k in ("appareil téléphonique", "phone device", "type de téléphone")):
-                        targets = ("Mobile", "Cell")
+                        targets = ("Mobile", "Portable", "Cell", "Cellulaire")
                     elif any(k in q for k in ("entendu parler", "hear about", "connu")):
                         targets = ("Job Board", "Site d'emploi", "Website", "Site web", "LinkedIn")
                     else:
@@ -1155,11 +1332,13 @@ async def _answer_common_questions_in_root(
 
     # 3. Radio groups (fieldset & ARIA radiogroup)
     try:
-        fieldsets = root.locator("fieldset:visible, [role='radiogroup']:visible")
+        fieldsets = root.locator("fieldset, [role='radiogroup']")
         for i in range(await fieldsets.count()):
             fs = fieldsets.nth(i)
             try:
                 if await fs.locator("input[type='radio'], [role='radio'], .fb-text-selectable__option").count() == 0:
+                    continue
+                if await fs.locator("label:visible, [role='radio']:visible, .fb-text-selectable__option:visible, input[type='radio']:visible").count() == 0:
                     continue
                 if await fs.locator("input[type='radio']:checked, [role='radio'][aria-checked='true']").count() > 0:
                     continue
@@ -1200,13 +1379,27 @@ async def _answer_common_questions_in_root(
                 clicked_radio = False
                 for lbl_txt in choices:
                     target_l = lbl_txt.lower()
-                    for opt_txt, opt_el in opt_pairs:
+                    for idx_opt, (opt_txt, opt_el) in enumerate(opt_pairs):
                         txt = opt_txt.strip().lower()
                         if txt == target_l or txt.startswith(f"{target_l} ") or txt.startswith(f"{target_l},") or (is_privacy_consent and target_l in txt):
                             try:
+                                await opt_el.scroll_into_view_if_needed()
                                 await opt_el.click(force=True)
                             except Exception:
-                                await opt_el.check(force=True)
+                                try:
+                                    await opt_el.evaluate("e => e.click()")
+                                except Exception:
+                                    pass
+                            if await fs.locator("input[type='radio']:checked, [role='radio'][aria-checked='true']").count() == 0:
+                                inps = fs.locator("input[type='radio']")
+                                if idx_opt < await inps.count():
+                                    try:
+                                        await inps.nth(idx_opt).check(force=True)
+                                    except Exception:
+                                        try:
+                                            await inps.nth(idx_opt).evaluate("e => e.click()")
+                                        except Exception:
+                                            pass
                             answered.append(f"radio -> {opt_txt[:40]}")
                             clicked_radio = True
                             break
@@ -1214,7 +1407,10 @@ async def _answer_common_questions_in_root(
                         break
                     lbl = fs.locator(f"label:has-text('{lbl_txt}')").first
                     if await lbl.count() > 0 and await lbl.is_visible(timeout=300):
-                        await lbl.click(force=True)
+                        try:
+                            await lbl.click(force=True)
+                        except Exception:
+                            await lbl.evaluate("e => e.click()")
                         answered.append(f"radio -> {lbl_txt}")
                         clicked_radio = True
                         break
@@ -1224,8 +1420,132 @@ async def _answer_common_questions_in_root(
                     try:
                         await opt_el.click(force=True)
                     except Exception:
-                        await opt_el.check(force=True)
+                        try:
+                            await opt_el.evaluate("e => e.click()")
+                        except Exception:
+                            pass
                     answered.append(f"radio -> {opt_txt[:40]}")
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # 3a. Fallback for radio groups NOT wrapped in <fieldset> or [role='radiogroup']
+    try:
+        loose_radios = root.locator("input[type='radio']")
+        handled_names: Set[str] = set()
+        for i in range(await loose_radios.count()):
+            r_el = loose_radios.nth(i)
+            try:
+                r_name = await r_el.get_attribute("name") or f"__idx_{i}"
+                if r_name in handled_names:
+                    continue
+                handled_names.add(r_name)
+                group_container = r_el.locator(
+                    "xpath=ancestor::div[contains(@class,'fb-dash-form-element') or contains(@class,'jobs-easy-apply-form-element') or contains(@data-test-form-builder-radio-button-form-component,'true')][1]"
+                ).first
+                if await group_container.count() == 0:
+                    group_container = r_el.locator("xpath=ancestor::div[2]").first
+                if await group_container.count() == 0:
+                    continue
+                if await group_container.locator("input[type='radio']:checked").count() > 0:
+                    continue
+                opt_pairs = await extract_radio_options(doc_ctx, group_container)
+                if not opt_pairs:
+                    continue
+                option_texts = [t for t, _ in opt_pairs]
+                human_q = await get_human_question_text(doc_ctx, group_container, exclude_texts=option_texts)
+                legend = (human_q + " " + (await group_container.inner_text())).lower()
+                saved_val = saved_answers.get(human_q.lower(), "") if human_q else ""
+                if not saved_val:
+                    saved_val = match_custom_rule(human_q or legend, custom_rules)
+                choices: Optional[Tuple[str, ...]] = (saved_val,) if saved_val else classify_yes_no_question(legend, verified_skills)
+                if not choices and any(k in legend for k in ("privacy policy", "privacy notice", "allowing", "contact me", "me contacter", "rgpd", "gdpr", "consent")):
+                    choices = ("Oui", "Yes", "J'accepte", "I agree")
+                if not choices and human_q and option_texts:
+                    llm_choice = ask_llm_for_field("radio", human_q, option_texts, answers, verified_skills)
+                    if llm_choice:
+                        choices = (llm_choice,)
+                if not choices:
+                    continue
+                for lbl_txt in choices:
+                    target_l = lbl_txt.lower()
+                    matched = False
+                    for opt_txt, opt_el in opt_pairs:
+                        if opt_txt.strip().lower() == target_l or opt_txt.strip().lower().startswith(f"{target_l} "):
+                            try:
+                                await opt_el.click(force=True)
+                            except Exception:
+                                await opt_el.check(force=True)
+                            answered.append(f"loose-radio -> {opt_txt[:40]}")
+                            matched = True
+                            break
+                    if matched:
+                        break
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # 3b. Button-based Yes/No toggle groups (e.g. Ashby Oui/Non buttons)
+    try:
+        yn_containers = root.locator(
+            "div:has(> button:visible):has(button:has-text('Oui')):has(button:has-text('Non')), "
+            "div:has(> button:visible):has(button:has-text('Yes')):has(button:has-text('No'))"
+        )
+        seen_yn_q: Set[str] = set()
+        for i in range(await yn_containers.count()):
+            box = yn_containers.nth(i)
+            try:
+                btns = await box.locator(":scope > button:visible").all()
+                if len(btns) != 2:
+                    continue
+                btn_pairs = [(re.sub(r"\s+", " ", await b.inner_text()).strip(), b) for b in btns]
+                btn_lows = {t.lower() for t, _ in btn_pairs}
+                if btn_lows not in ({"oui", "non"}, {"yes", "no"}):
+                    continue
+                already_selected = False
+                for _, b in btn_pairs:
+                    cls = (await b.get_attribute("class") or "").lower()
+                    if (
+                        (await b.get_attribute("aria-pressed") == "true")
+                        or (await b.get_attribute("aria-checked") == "true")
+                        or (await b.get_attribute("data-selected") == "true")
+                        or ("active" in cls or "selected" in cls or "checked" in cls)
+                    ):
+                        already_selected = True
+                        break
+                if already_selected:
+                    continue
+
+                parent_box = box.locator("xpath=ancestor::div[1]").first
+                human_q = await get_human_question_text(doc_ctx, box, exclude_texts=[t for t, _ in btn_pairs])
+                if not human_q and await parent_box.count() > 0:
+                    raw_q = re.sub(r"\s+", " ", await parent_box.inner_text()).strip()
+                    for t, _ in btn_pairs:
+                        raw_q = re.sub(rf"\b{re.escape(t)}\b", " ", raw_q, flags=re.IGNORECASE)
+                    human_q = re.sub(r"\s+", " ", raw_q).strip()[:250]
+                if not human_q or human_q in seen_yn_q:
+                    continue
+                seen_yn_q.add(human_q)
+
+                saved_val = saved_answers.get(human_q.lower(), "")
+                if not saved_val:
+                    saved_val = match_custom_rule(human_q, custom_rules)
+                choices = (saved_val,) if saved_val else classify_yes_no_question(human_q, verified_skills)
+                if not choices:
+                    llm_choice = ask_llm_for_field("radio", human_q, [t for t, _ in btn_pairs], answers, verified_skills)
+                    if llm_choice:
+                        choices = (llm_choice,)
+                if not choices:
+                    continue
+
+                for choice_txt in choices:
+                    target_b = next((b for t, b in btn_pairs if t.lower() == choice_txt.lower()), None)
+                    if target_b is not None:
+                        await target_b.click()
+                        answered.append(f"yn-btn -> {choice_txt} ({human_q[:35]})")
+                        break
             except Exception:
                 continue
     except Exception:
@@ -1268,15 +1588,18 @@ async def _answer_common_questions_in_root(
                         "se souvenir de moi", "remember me",
                     )
                 )
-                is_legal = any(
+                is_refusal = any(k in q_low for k in ("je refuse", "i refuse", "decline"))
+                is_legal = (not is_refusal) and any(
                     k in f"{q_low} {cb_name}"
                     for k in (
-                        "accepte", "j'accepte", "conditions", "politique", "confidentialité",
+                        "accepte", "j'accepte", "j’accepte", "conditions", "cgu", "politique", "confidentialité",
                         "rgpd", "gdpr", "privacy", "terms", "certifie", "exactitude",
                         "exact", "lu et approuvé", "consent", "autorise le traitement",
                         "données personnelles", "traitement de mes données", "cadre de ma candidature",
                     )
                 )
+                if is_refusal and not is_required:
+                    continue
                 # Ignore hidden non-legal checkboxes (e.g. off-screen filters)
                 if not is_visible and not is_legal and not is_required:
                     continue
@@ -1289,7 +1612,17 @@ async def _answer_common_questions_in_root(
                     if role_attr == "checkbox":
                         await cb.click(force=True)
                     else:
-                        await cb.check(force=True)
+                        try:
+                            await cb.check(force=True)
+                        except Exception:
+                            pass
+                        if not await cb.is_checked():
+                            raw_id = await cb.get_attribute("id") or ""
+                            lbl = doc_ctx.locator(f"label[for='{raw_id}']").first if raw_id else cb.locator("xpath=ancestor::label[1]").first
+                            if await lbl.count() > 0:
+                                await lbl.click(force=True)
+                            else:
+                                await cb.click(force=True)
                     answered.append(f"checkbox -> checked ({(human_q or cb_name)[:40]})")
                 elif is_marketing and not is_required:
                     continue
@@ -1328,6 +1661,10 @@ async def inject_files(page: Page, cv_pdf: Path, lm_pdf: Path) -> List[str]:
                     lbl = ctx.locator(f"label[for='{el_id}']").first
                     if await lbl.count() > 0:
                         hint_parts.append(await lbl.inner_text())
+                if not hint_parts:
+                    hq = await get_human_question_text(ctx, el)
+                    if hq:
+                        hint_parts.append(hq)
                 hint = " ".join(hint_parts).lower()
 
                 if any(k in hint for k in ["lettre", "motivation", "cover", "lm"]):
@@ -1422,6 +1759,8 @@ async def find_submit_button(page: Page):
         "rechercher", "search", "connexion", "connecter", "login", "sign in",
         "créer un compte", "alerte", "alert", "newsletter", "annuler", "cancel",
         "cookie", "refuser", "fermer", "close",
+        "suivant", "next", "continue", "continuer", "précédent", "previous",
+        "back", "retour", "review", "vérifier",
     )
     for _, ctx in await get_form_roots(page):
         for sel in sub_selectors:
@@ -1444,6 +1783,30 @@ async def find_submit_button(page: Page):
 
 
 async def try_click_next_step(page: Page) -> bool:
+    # Dismiss LinkedIn "Save this application?" dialog if accidentally triggered
+    try:
+        discard_btn = page.locator("div[role='dialog']:has-text('Save this application') button[aria-label='Dismiss'], div[role='dialog']:has-text('Enregistrer cette candidature') button[aria-label='Ignorer']").first
+        if await discard_btn.count() > 0 and await discard_btn.is_visible(timeout=200):
+            await discard_btn.click()
+            await page.wait_for_timeout(300)
+    except Exception:
+        pass
+    try:
+        open_opt = page.locator(".basic-typeahead__selectable:visible, .artdeco-typeahead__result:visible, [role='listbox'] [role='option']:visible").first
+        if await open_opt.count() > 0 and await open_opt.is_visible(timeout=200):
+            await open_opt.click()
+            await page.wait_for_timeout(200)
+    except Exception:
+        pass
+    # If an inline LinkedIn Work Experience / Education edit card is open ("Save" + "Delete experience"), save it first
+    try:
+        del_exp = page.locator("button:has-text('Delete experience'):visible, button:has-text('Supprimer l’expérience'):visible").first
+        save_exp = page.locator("button:has-text('Save'):visible, button:has-text('Enregistrer'):visible").first
+        if await del_exp.count() > 0 and await save_exp.count() > 0 and await save_exp.is_enabled():
+            await save_exp.click()
+            await page.wait_for_timeout(600)
+    except Exception:
+        pass
     next_selectors = [
         "button[data-easy-apply-next-button]",
         "button[aria-label*='étape suivante' i]",
@@ -1517,8 +1880,24 @@ async def collect_validation_errors(page: Page) -> List[str]:
         try:
             for el in (await root.locator(err_sel).all())[:10]:
                 txt = re.sub(r"\s+", " ", await el.inner_text()).strip()
-                if txt and len(txt) < 220 and txt.lower() not in seen:
-                    seen.add(txt.lower())
+                txt_low = txt.lower()
+                is_benign_notice = any(
+                    ok in txt_low
+                    for ok in (
+                        "uploaded successfully",
+                        "téléchargé avec succès",
+                        "autofill completed",
+                        "saved successfully",
+                        "enregistré avec succès",
+                    )
+                ) and not any(
+                    bad in txt_low
+                    for bad in ("error", "erreur", "invalid", "required", "requis", "failed", "échec", "missing")
+                )
+                if is_benign_notice:
+                    continue
+                if txt and len(txt) < 220 and txt_low not in seen:
+                    seen.add(txt_low)
                     errors.append(txt)
         except Exception:
             pass
@@ -1670,6 +2049,22 @@ async def process_offer_concurrently(
     ats = detect_ats_provider(active_page.url)
     print(f"[*] [{company}] Apply clicked: {clicked} | Target: {ats}")
 
+    if "linkedin.com/jobs/search" in active_page.url.lower() and "/jobs/view/" in nav_url.lower():
+        print(f"[!] Bailout [{company}]: LinkedIn offer expired/redirected to search results -> 'expired'")
+        update_tracker_status(url, company, "expired")
+        return active_page, "expired"
+
+    if ats == "LinkedIn" and "linkedin.com/jobs/view" in active_page.url.lower() and not await _has_visible_modal(active_page):
+        try:
+            await active_page.wait_for_timeout(1000)
+            if not await _has_visible_modal(active_page):
+                retry_btn = active_page.locator("button.jobs-apply-button:visible").first
+                if await retry_btn.is_visible(timeout=1000):
+                    await retry_btn.click()
+                    await active_page.wait_for_timeout(1500)
+        except Exception:
+            pass
+
     if not clicked:
         page_low = ""
         try:
@@ -1680,8 +2075,17 @@ async def process_offer_concurrently(
             print(f"[!] Bailout [{company}]: Offer appears closed/expired ({ats}) -> 'expired'")
             update_tracker_status(url, company, "expired")
             return active_page, "expired"
+        has_pwd_input = False
+        try:
+            has_pwd_input = await active_page.locator("input[type='password']:visible").count() > 0
+        except Exception:
+            pass
         if any(k in active_page.url.lower() for k in ("authwall", "/login", "connexion", "signin", "se-connecter")) or (
-            ats == "APEC" and any(k in page_low for k in ("connectez-vous", "me connecter", "mon espace"))
+            has_pwd_input
+        ) or (
+            ats == "APEC"
+            and "mot de passe" in page_low
+            and any(k in page_low for k in ("connectez-vous", "me connecter", "se connecter", "identifiant"))
         ):
             print(f"[!] Bailout [{company}]: Login wall detected ({ats}) -> 'needs_login'")
             update_tracker_status(url, company, "needs_login")
@@ -1697,9 +2101,20 @@ async def process_offer_concurrently(
         body_low_check = (await active_page.locator("body").inner_text(timeout=1000)).lower()[:2000]
     except Exception:
         pass
+    has_pwd_after_click = False
+    try:
+        has_pwd_after_click = await active_page.locator("input[type='password']:visible").count() > 0
+    except Exception:
+        pass
     if any(k in active_page.url.lower() for k in ("authwall", "/login", "connexion", "signin", "se-connecter")) or (
+        has_pwd_after_click
+    ) or (
         "vous avez déjà un compte" in body_low_check and "mot de passe" in body_low_check
-    ) or (ats == "APEC" and any(k in body_low_check for k in ("connectez-vous", "identifiant", "mot de passe"))):
+    ) or (
+        ats == "APEC"
+        and "mot de passe" in body_low_check
+        and any(k in body_low_check for k in ("connectez-vous", "identifiant", "me connecter", "se connecter"))
+    ):
         print(f"[!] Bailout [{company}]: Login wall detected ({ats}) -> 'needs_login' — sign in via './stage login'")
         update_tracker_status(url, company, "needs_login")
         return active_page, "needs_login"
@@ -1731,6 +2146,8 @@ async def process_offer_concurrently(
                 pass
             await active_page.wait_for_timeout(600)
 
+            if ats == "LinkedIn":
+                await _prune_blank_linkedin_experience(active_page)
             step_unanswered: List[str] = []
             filled = await fill_matching_fields(active_page, profile["form_answers"])
             filled.extend(
@@ -1749,9 +2166,12 @@ async def process_offer_concurrently(
             if attached:
                 await active_page.wait_for_timeout(700)
 
-            is_external = ats not in {"LinkedIn", "HelloWork", "Welcome to the Jungle"}
-            if step == 1 and skip_external and is_external and len(filled) == 0 and len(attached) == 0:
-                print(f"[!] Bailout [{company}]: External ATS redirect ({ats}: {active_page.url})")
+            is_external = ats not in {
+                "LinkedIn", "HelloWork", "Welcome to the Jungle",
+                "JobTeaser", "Indeed", "APEC", "Meteojob",
+            }
+            if step == 1 and skip_external and is_external:
+                print(f"[!] Bailout [{company}]: Skipped external ATS ({ats}: {active_page.url})")
                 update_tracker_status(url, company, "manual_portal")
                 return active_page, "manual_portal"
 
@@ -1816,13 +2236,21 @@ async def process_offer_concurrently(
 
             pre_sig = await get_step_signature(active_page)
             if not await try_click_next_step(active_page):
+                if step > 1 and ats == "LinkedIn" and not await _has_visible_modal(active_page):
+                    if await check_submission_confirmed(active_page, had_modal=True):
+                        update_tracker_status(url, company, "applied")
+                        print(f"[+] [{company}] Confirmed -> 'applied'!")
+                        return active_page, "applied"
                 if step_unanswered:
                     bailout_reason = f"Blocked by unanswered required fields: {step_unanswered}"
                 else:
                     vis_btns = await dump_visible_buttons(active_page)
-                    bailout_reason = f"No Next/Submit button found at step {step} ({ats}) | Visible buttons: {vis_btns}"
+                    shot = await save_debug_screenshot(active_page, company, f"no_next_step_{step}")
+                    shot_note = f" | Screenshot: {shot.relative_to(WORKSPACE)}" if shot else ""
+                    bailout_reason = f"No Next/Submit button found at step {step} ({ats}) | Visible buttons: {vis_btns}{shot_note}"
                 break
 
+            await active_page.wait_for_timeout(500)
             post_sig = await get_step_signature(active_page)
             if post_sig == pre_sig:
                 val_errors = await collect_validation_errors(active_page)
@@ -1831,11 +2259,16 @@ async def process_offer_concurrently(
                 elif step_unanswered:
                     bailout_reason = f"Stuck on step {step} ({ats}) — unanswered fields: {step_unanswered}"
                 else:
-                    bailout_reason = f"Stuck on step {step} ({ats}) — clicking Next did not advance modal"
+                    shot = await save_debug_screenshot(active_page, company, f"stuck_step_{step}")
+                    shot_note = f" | Screenshot: {shot.relative_to(WORKSPACE)}" if shot else ""
+                    bailout_reason = f"Stuck on step {step} ({ats}) — clicking Next did not advance modal{shot_note}"
                 break
         except Exception as e:
-            bailout_reason = f"Step {step} error ({e})"
-            print(f"[!] [{company}] Step {step} error: {e}")
+            if active_page.is_closed():
+                bailout_reason = f"Tab closed mid-fill at step {step}"
+            else:
+                bailout_reason = f"Step {step} error ({e})"
+                print(f"[!] [{company}] Step {step} error: {e}")
             break
     else:
         if last_step_unanswered:
@@ -1940,22 +2373,26 @@ async def async_main() -> int:
                     print(f"  [!] Could not open {label} ({login_url}): {e}")
             print(f"[*] Opened login tabs for: {', '.join(labels)}.")
             print("[*] Sign in on each tab so cookies are saved in .chrome_profile/, then close the Chrome window when done.")
+            async def _save_cookies_snapshot() -> None:
+                try:
+                    cookies = await context.cookies()
+                    storage_state_path.write_text(
+                        json.dumps({"cookies": cookies}, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
+
             ticks = 0
             try:
                 while len(context.pages) > 0:
                     await asyncio.sleep(0.5)
                     ticks += 1
-                    if ticks % 6 == 0:
-                        try:
-                            await context.storage_state(path=str(storage_state_path))
-                        except Exception:
-                            pass
+                    if ticks % 4 == 0:
+                        await _save_cookies_snapshot()
             except Exception:
                 pass
-            try:
-                await context.storage_state(path=str(storage_state_path))
-            except Exception:
-                pass
+            await _save_cookies_snapshot()
             await context.close()
         return 0
 
@@ -1966,6 +2403,12 @@ async def async_main() -> int:
 
     profile = load_json(PROFILE_PATH)
 
+    if args.auto and MANUAL_CURRENT_PATH.exists():
+        try:
+            MANUAL_CURRENT_PATH.unlink()
+        except Exception:
+            pass
+
     run_headless = bool(args.auto and not args.headed)
     launch_kwargs: Dict[str, Any] = {
         "user_data_dir": str(CHROME_PROFILE_DIR),
@@ -1975,7 +2418,9 @@ async def async_main() -> int:
         "ignore_default_args": ["--enable-automation"],
         "args": ["--disable-blink-features=AutomationControlled"],
     }
-    if run_headless:
+    if Path("/Applications/Google Chrome.app").exists():
+        launch_kwargs["channel"] = "chrome"
+    elif run_headless:
         launch_kwargs["channel"] = "chromium"
         launch_kwargs["user_agent"] = (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -1988,13 +2433,8 @@ async def async_main() -> int:
         if storage_state_path.exists():
             try:
                 saved = json.loads(storage_state_path.read_text(encoding="utf-8"))
-                existing_keys = {(c.get("name"), c.get("domain")) for c in await context.cookies()}
-                missing = [
-                    c for c in saved.get("cookies", [])
-                    if (c.get("name"), c.get("domain")) not in existing_keys
-                ]
-                if missing:
-                    await context.add_cookies(missing)
+                if saved.get("cookies"):
+                    await context.add_cookies(saved["cookies"])
             except Exception:
                 pass
 
@@ -2036,6 +2476,122 @@ async def async_main() -> int:
             await asyncio.gather(*(worker_task(i, mp) for i, mp in enumerate(meta_paths)))
             try:
                 await asyncio.wait_for(context.close(), timeout=15)
+            except Exception:
+                pass
+            return 0
+
+        if not args.auto:
+            max_workers = 1
+            for idx, mp in enumerate(meta_paths):
+                meta = load_json(mp)
+                u = (args.url if len(meta_paths) == 1 and args.url else meta.get("url", ""))
+                if not u:
+                    continue
+                if MANUAL_SKIP_PATH.exists():
+                    try:
+                        MANUAL_SKIP_PATH.unlink()
+                    except Exception:
+                        pass
+
+                cv_rel = meta.get("cv_pdf", "")
+                lm_rel = meta.get("lm_pdf", "")
+                cv_abs = (WORKSPACE / cv_rel) if cv_rel else None
+                lm_abs = (WORKSPACE / lm_rel) if lm_rel else None
+                try:
+                    cv_ui = str(cv_abs.relative_to(WORKSPACE)) if cv_abs and cv_abs.is_relative_to(WORKSPACE) else cv_rel
+                except Exception:
+                    cv_ui = cv_rel
+                try:
+                    lm_ui = str(lm_abs.relative_to(WORKSPACE)) if lm_abs and lm_abs.is_relative_to(WORKSPACE) else lm_rel
+                except Exception:
+                    lm_ui = lm_rel
+                try:
+                    MANUAL_CURRENT_PATH.parent.mkdir(parents=True, exist_ok=True)
+                    MANUAL_CURRENT_PATH.write_text(
+                        json.dumps({
+                            "active": True,
+                            "index": idx + 1,
+                            "total": len(meta_paths),
+                            "company": meta.get("company", ""),
+                            "role": meta.get("role", ""),
+                            "url": u,
+                            "cv_pdf": cv_ui,
+                            "lm_pdf": lm_ui,
+                        }, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
+
+                print(f"\n=== Manual Review [{idx + 1}/{len(meta_paths)}]: {meta.get('company', '')} — {meta.get('role', '')} ===")
+
+                try:
+                    _ = context.pages
+                except Exception:
+                    context = await p.chromium.launch_persistent_context(**launch_kwargs)
+
+                pg = context.pages[0] if context.pages else await context.new_page()
+                res = await process_offer_concurrently(
+                    pg, profile, meta, u, auto=False, skip_external=args.skip_external
+                )
+                active_pg = res[0] if isinstance(res, tuple) else pg
+                status_res = res[1] if isinstance(res, tuple) else "manual_portal"
+
+                if status_res not in {"applied", "expired", "needs_login", "closed"} and not active_pg.is_closed():
+                    if cv_abs and cv_abs.exists():
+                        try:
+                            subprocess.run(["open", "-R", str(cv_abs)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+                            subprocess.Popen(["open", "-a", "Finder"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        except Exception:
+                            pass
+                    elif cv_abs and cv_abs.parent.exists():
+                        try:
+                            subprocess.run(["open", str(cv_abs.parent)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+                            subprocess.Popen(["open", "-a", "Finder"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        except Exception:
+                            pass
+                    print(f"[*] [{meta.get('company', '')}] Ready — submit in Chrome (or click Skip / Mark Applied in UI), then close tab.")
+                    confirmed_here = False
+                    try:
+                        while not active_pg.is_closed():
+                            if MANUAL_SKIP_PATH.exists():
+                                action = "skipped"
+                                try:
+                                    action = MANUAL_SKIP_PATH.read_text(encoding="utf-8").strip().lower() or "skipped"
+                                    MANUAL_SKIP_PATH.unlink()
+                                except Exception:
+                                    pass
+                                if action in {"skipped", "applied"}:
+                                    update_tracker_status(u, meta.get("company", ""), action)
+                                    print(f"[*] [{meta.get('company', '')}] Marked '{action}' from UI — advancing...")
+                                try:
+                                    await active_pg.close()
+                                except Exception:
+                                    pass
+                                break
+                            if not confirmed_here and await check_submission_confirmed(active_pg):
+                                confirmed_here = True
+                                update_tracker_status(u, meta.get("company", ""), "applied")
+                                print(f"[+] Confirmed submission for {meta.get('company', '')}! Marked 'applied'.")
+                            await asyncio.sleep(0.5)
+                    except Exception:
+                        pass
+
+                for extra_pg in list(context.pages):
+                    if extra_pg is not context.pages[0] or idx == len(meta_paths) - 1:
+                        try:
+                            if not extra_pg.is_closed():
+                                await extra_pg.close()
+                        except Exception:
+                            pass
+
+            if MANUAL_CURRENT_PATH.exists():
+                try:
+                    MANUAL_CURRENT_PATH.unlink()
+                except Exception:
+                    pass
+            try:
+                await context.close()
             except Exception:
                 pass
             return 0

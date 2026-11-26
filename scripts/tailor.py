@@ -452,9 +452,10 @@ def select_and_format_projects(
     projects: List[Dict[str, Any]],
     matched_keywords: List[str],
     job_text: str,
-    max_bullets: int = 3,
+    bullet_caps: Tuple[int, int, int] = (3, 3, 3),
 ) -> Tuple[List[Dict[str, Any]], str]:
     job_lower = job_text.lower()
+    job_tokens = set(re.findall(r"[a-z0-9\+\#]{3,}", job_lower))
     scored: List[Tuple[int, Dict[str, Any]]] = []
     for proj in projects:
         blob = proj["search_blob"].lower()
@@ -473,8 +474,20 @@ def select_and_format_projects(
             lines.append("\\vspace{0.22em}")
         link_str = f" \\textperiodcentered{{}} \\href{{{proj['url']}}}{{\\texttt{{GitHub}}}}" if proj.get("url") else ""
         lines.append(f"\\textbf{{{proj['name']}}} --- \\textit{{{proj['subtitle']}}}{link_str}")
+        cap = bullet_caps[idx] if idx < len(bullet_caps) else bullet_caps[-1]
+        ranked_bullets = sorted(
+            enumerate(proj["bullets"]),
+            key=lambda pair: (
+                -(
+                    sum(2 for kw in matched_keywords if kw.lower() in pair[1].lower())
+                    + sum(1 for tok in job_tokens if tok in pair[1].lower())
+                ),
+                pair[0],
+            ),
+        )
+        chosen_bullets = [b for _, b in ranked_bullets[:cap]]
         lines.append("\\begin{itemize}")
-        for b in proj["bullets"][:max_bullets]:
+        for b in chosen_bullets:
             lines.append(f"  \\item {b}")
         lines.append("\\end{itemize}")
     lines.append("}")
@@ -789,9 +802,9 @@ def main() -> int:
     cv_pdf_path: Optional[Path] = None
     cv_ok = False
     pages = 1
-    for max_bullets in (3, 2, 1):
+    for bullet_caps in ((3, 3, 3), (3, 3, 2), (3, 2, 2), (2, 2, 2), (2, 2, 1), (2, 1, 1), (1, 1, 1)):
         selected_projects, projects_block = select_and_format_projects(
-            projects, matched_keywords, job_text, max_bullets=max_bullets
+            projects, matched_keywords, job_text, bullet_caps=bullet_caps
         )
         cv_tex = replace_marker_block(
             base_cv, "CV_TITLE", f"{{\\large\\bfseries {latex_escape(cv_title)}}}\\\\[0.2em]"
@@ -816,7 +829,7 @@ def main() -> int:
             if overfull:
                 print(f"[!] Warning: LaTeX overfull detected ({len(overfull)} lines).")
             break
-        print(f"[*] CV was {pages} pages with max_bullets={max_bullets}, tightening...")
+        print(f"[*] CV was {pages} pages with bullet_caps={bullet_caps}, tightening...")
 
     if not cv_ok and cv_pdf_path:
         print(f"[!] Check {cv_pdf_path} (pages={pages}).")

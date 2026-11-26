@@ -40,10 +40,24 @@
     ],
     "location": "Paris, Île-de-France, France",
     "location_short": "Paris",
-    "location_boost": ["paris", "île-de-france", "saclay", "orsay"],
-    "level_boost": ["but 2", "but 3", "bac+2", "bac+3", "3 mois"]
+    "location_boost": [
+      "paris",
+      "île-de-france",
+      "saclay",
+      "orsay"
+    ],
+    "level_boost": [
+      "but 2",
+      "but 3",
+      "bac+2",
+      "bac+3",
+      "3 mois"
+    ]
   },
-  "commit_authors": ["YourGitHubUsername", "you@example.com"],
+  "commit_authors": [
+    "YourGitHubUsername",
+    "you@example.com"
+  ],
   "form_answers": {
     "prenom": "Prénom",
     "nom": "NOM",
@@ -63,6 +77,111 @@
     "mobilite": "Île-de-France / Télétravail"
   },
   "custom_rules": [
-    {"keyword": "permis b", "answer": "Non"}
-  ]
+    {
+      "keyword": "permis b",
+      "answer": "Non"
+    }
+  ],
+  "preferences": {
+    "target_roles": [
+      "développeur",
+      "developpeur",
+      "software",
+      "fullstack",
+      "full-stack",
+      "backend",
+      "frontend",
+      "web",
+      "cybersécurité",
+      "cybersecurite",
+      "réseaux",
+      "reseaux",
+      "systèmes",
+      "systemes",
+      "devops",
+      "data",
+      "ia",
+      "cloud",
+      "linux",
+      "informatique"
+    ],
+    "avoid_roles": [
+      "paie",
+      "ressources humaines",
+      "comptab",
+      "commercial",
+      "vente",
+      "juridique",
+      "agronomie",
+      "formulation",
+      "achats",
+      "marketing",
+      "finance",
+      "audit"
+    ],
+    "preferred_locations": [
+      "bures",
+      "orsay",
+      "saclay",
+      "palaiseau",
+      "massy",
+      "gif",
+      "ulys",
+      "les ulis",
+      "91",
+      "essonne",
+      "velizy",
+      "vélizy",
+      "versailles",
+      "antony"
+    ],
+    "idf_locations": [
+      "paris",
+      "île-de-france",
+      "ile-de-france",
+      "nanterre",
+      "courbevoie",
+      "la défense",
+      "la defense",
+      "boulogne",
+      "issy",
+      "montrouge",
+      "clichy",
+      "levallois",
+      "neuilly",
+      "92",
+      "93",
+      "94",
+      "78",
+      "75"
+    ],
+    "work_types": [
+      "télétravail",
+      "teletravail",
+      "remote",
+      "hybride",
+      "hybrid"
+    ],
+    "avoid_locations": [
+      "lyon",
+      "toulouse",
+      "marseille",
+      "bordeaux",
+      "nantes",
+      "lille",
+      "roubaix",
+      "annecy",
+      "saint-etienne",
+      "saint-étienne",
+      "canada",
+      "strasbourg",
+      "rennes",
+      "nice",
+      "montpellier",
+      "grenoble",
+      "la hague",
+      "penly",
+      "cholet"
+    ]
+  }
 }
