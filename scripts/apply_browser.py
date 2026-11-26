@@ -63,20 +63,63 @@ def _load_project_env(env_path: Path = WORKSPACE / ".env") -> None:
 
 _load_project_env()
 
-CONFIRMATION_PHRASES = [
+SITE_CONFIRMATION_PHRASES: Dict[str, Tuple[str, ...]] = {
+    "LinkedIn": (
+        "your application was sent",
+        "votre candidature a été envoyée",
+        "application sent",
+        "candidature envoyée",
+    ),
+    "HelloWork": (
+        "votre candidature a bien été envoyée",
+        "votre candidature a été envoyée",
+        "candidature bien envoyée",
+        "candidature transmise",
+        "nous avons bien reçu votre candidature",
+    ),
+    "Welcome to the Jungle": (
+        "votre candidature a été envoyée",
+        "candidature envoyée",
+        "candidature bien envoyée",
+        "your application has been sent",
+        "application sent",
+    ),
+    "JobTeaser": (
+        "votre candidature a bien été envoyée",
+        "votre candidature a été envoyée",
+        "candidature enregistrée",
+        "candidature envoyée",
+        "your application has been submitted",
+    ),
+    "Indeed": (
+        "your application has been submitted",
+        "votre candidature a été envoyée",
+        "candidature envoyée",
+        "application submitted",
+    ),
+    "APEC": (
+        "votre candidature a bien été transmise",
+        "votre candidature a été transmise",
+        "candidature transmise",
+        "votre candidature a été envoyée",
+    ),
+    "Meteojob": (
+        "votre candidature a bien été envoyée",
+        "votre candidature a été envoyée",
+        "candidature envoyée",
+        "candidature enregistrée",
+    ),
+}
+
+CONFIRMATION_PHRASES_EXTERNAL: Tuple[str, ...] = (
     "votre candidature a été envoyée",
     "votre candidature a bien été",
-    "candidature a bien été",
     "votre candidature a été transmise",
     "candidature bien envoyée",
     "candidature envoyée",
     "candidature transmise",
     "candidature prise en compte",
     "nous avons bien reçu votre candidature",
-    "candidature bien envoyée",
-    "candidature envoyée",
-    "candidature transmise",
-    "candidature prise en compte",
     "félicitations, votre candidature",
     "application sent",
     "application submitted",
@@ -88,7 +131,7 @@ CONFIRMATION_PHRASES = [
     "thank you for applying",
     "thank you for your application",
     "candidature enregistrée",
-]
+)
 
 EXPIRED_OFFER_PHRASES = [
     "offre expirée",
@@ -1976,11 +2019,13 @@ async def check_submission_confirmed(
         if any(tok in u for tok in CONFIRMATION_URL_TOKENS):
             return True
 
-        # Check visible text in main page and iframes for confirmation phrases
+        # Check visible text in main page and iframes for site-specific (or external fallback) confirmation phrases
+        site_name = detect_ats_provider(page.url)
+        phrases = SITE_CONFIRMATION_PHRASES.get(site_name, CONFIRMATION_PHRASES_EXTERNAL)
         for _, ctx in await get_form_roots(page):
             try:
                 body_text = (await ctx.locator("body").inner_text(timeout=2000)).lower()
-                if any(phrase in body_text for phrase in CONFIRMATION_PHRASES):
+                if any(phrase in body_text for phrase in phrases):
                     return True
             except Exception:
                 continue
