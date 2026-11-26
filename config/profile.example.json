@@ -119,7 +119,11 @@
       "achats",
       "marketing",
       "finance",
-      "audit"
+      "audit",
+      "administratif",
+      "documentaliste",
+      "bibliothécaire",
+      "secrétariat"
     ],
     "preferred_locations": [
       "bures",

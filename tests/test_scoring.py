@@ -14,6 +14,7 @@ from batch_apply import (
     is_excluded_final_year_offer,
     score_offer,
 )
+from scrapers.scoring import is_irrelevant_offer
 from core.config import DEFAULT_PREFERENCES
 
 
@@ -63,6 +64,21 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(clean_company_name("Chez Thales"), "Thales")
         self.assertEqual(clean_company_name("Postuler sur le site de l'entreprise"), "")
         self.assertEqual(clean_company_name("Voir toutes les offres de Capgemini"), "Capgemini")
+
+
+    def test_irrelevant_offer_gate_is_preference_driven(self) -> None:
+        prefs = {k: [x.lower() for x in v] for k, v in DEFAULT_PREFERENCES.items()}
+        self.assertTrue(is_irrelevant_offer("Stage - Assistant Administratif", "", prefs))
+        self.assertTrue(is_irrelevant_offer("STAGE - Documentaliste/bibliothécaire", "", prefs))
+        self.assertFalse(is_irrelevant_offer("Stage - Développeur Python", "", prefs))
+        # no title signal but a clearly technical description -> kept
+        tech = "Développement logiciel web, réseaux et systèmes Linux, cybersécurité et data. " * 5
+        self.assertFalse(is_irrelevant_offer("Stage - Ingénieur Edvance", tech, prefs))
+        # no title signal and non-technical description -> dropped
+        admin = "Gestion du courrier, accueil des visiteurs, planification des réunions et classement. " * 5
+        self.assertTrue(is_irrelevant_offer("Stage - Chargé de mission", admin, prefs))
+        # too little text to judge -> kept
+        self.assertFalse(is_irrelevant_offer("Stagiaire", "court", prefs))
 
 
 if __name__ == "__main__":

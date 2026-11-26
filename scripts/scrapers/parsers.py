@@ -6,6 +6,7 @@ from typing import Dict
 
 from bs4 import BeautifulSoup
 
+from core.offer_text import company_from_listing, is_generic_company, sanitize_role, truncate_words
 from scrapers.http_client import AsyncBrowserPool, get_http_session, is_login_wall
 
 _COMPANY_CTA_REJECT = (
@@ -140,10 +141,16 @@ def parse_offer_html(offer: Dict[str, str], html: str) -> Dict[str, str]:
             tag.decompose()
         body_text = soup.get_text("\n", strip=True)
 
+    preview = offer.get("preview") or ""
+    if is_generic_company(company):
+        # Listing cards often read "<Title> H/F <Employer> - <City> - 75 ..."; never trust the board name.
+        company = company_from_listing(preview) or company
+    clean_role = sanitize_role(role) or sanitize_role(preview) or truncate_words(role or preview, 70)
+
     return {
         **offer,
         "company": company or offer["source"],
-        "role": role or offer["preview"] or "Stagiaire Informatique",
+        "role": clean_role or "Stagiaire Informatique",
         "location": offer.get("location_hint") or "Île-de-France",
         "text": body_text[:12000],
     }

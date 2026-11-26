@@ -19,7 +19,7 @@ cv-proyect/
 │   ├── base_cv.tex        # Base 1-page LaTeX CV template with marker blocks
 │   └── base_lm.tex        # Base 1-page LaTeX Lettre de Motivation template (Vous / Moi / Nous)
 ├── scripts/
-│   ├── core/              # Shared core package (config/profile I/O, locked atomic CSV storage, Chrome session, LLM cache, logging)
+│   ├── core/              # Shared core package (config/profile I/O, locked atomic CSV storage, Chrome session, LLM cache, logging, `offer_text.py` role/company cleaning)
 │   ├── scrapers/          # Job board scrapers, HTTP/Playwright pools, HTML parsers, and BUT 2/3 offer scoring
 │   ├── browser/           # Playwright form automation (ATS detection, question rules, DOM helpers, navigation, runner)
 │   ├── sync_github.py     # Indexes public/private/collaborative GitHub repos via `gh` + `git log --author`
@@ -44,6 +44,6 @@ cv-proyect/
 ## Data Flow
 
 1. **Index (`sync_github.py`)** → Reads `gh` repos + `git log --author` → writes `config/master_profile.md`.
-2. **Fetch & Tailor (`batch_apply.py` → `tailor.py`)** → Scrapes LinkedIn, HelloWork, WTTJ, JobTeaser, Indeed, APEC & Meteojob (reusing `.chrome_profile/` cookies automatically) → deduplicates against `data/applications.csv` → ranks for BUT 2/3 & Paris/Saclay → compiles 1-page `CV_*.pdf` & `LM_*.pdf` → logs `drafted` in `data/applications.csv`.
+2. **Fetch & Tailor (`batch_apply.py` → `tailor.py`)** → Scrapes LinkedIn, HelloWork, WTTJ, JobTeaser, Indeed, APEC & Meteojob (reusing `.chrome_profile/` cookies automatically) → deduplicates against `data/applications.csv` → cleans scraped titles/employers (`core/offer_text.py`) → ranks for BUT 2/3 & Paris/Saclay and drops off-profile roles (`is_irrelevant_offer`) → compiles 1-page `CV_*.pdf` & `LM_*.pdf` → logs `drafted` in `data/applications.csv`.
 3. **Apply (`apply_browser.py`)** → Launches 1 persistent Chrome window (`.chrome_profile/`) with up to 5 concurrent tabs (`asyncio.gather`) → fills forms, attaches PDFs, unchecks *Follow company*, and updates `data/applications.csv` (`applied` on confirmed submission, `manual_portal` otherwise).
 4. **Spontaneous Outreach (`spontaneous_mail.py`)** → Queries `recherche-entreprises.api.gouv.fr` around Bures-sur-Yvette/Saclay → runs `tailor.py` → saves `.eml` drafts with both PDFs attached.

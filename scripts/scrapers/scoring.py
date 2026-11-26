@@ -130,11 +130,47 @@ def classify_offer_quality(
     return tier, score
 
 
+def _term_hit(term: str, text: str) -> bool:
+    """Word-start match (stems like 'comptab' work); short terms ('ia', 'web') need a full-word match."""
+    t = term.strip().lower()
+    if not t:
+        return False
+    end = r"(?![a-z0-9])" if len(t) <= 3 else ""
+    return re.search(rf"(?<![a-z0-9]){re.escape(t)}{end}", text) is not None
+
+
+def is_irrelevant_offer(
+    title: str, description: str = "", prefs: Optional[Dict[str, List[str]]] = None
+) -> bool:
+    """True when the offer has no tech/target-role signal (e.g. 'Assistant administratif', 'Documentaliste').
+
+    Driven entirely by `preferences.target_roles` / `avoid_roles` in profile.json (no hardcoded lists).
+    Offers with a target term in the title are always kept; offers with fewer than 2 target-term hits in the description are dropped; descriptions too short to judge
+    are kept unless the title hits `avoid_roles`.
+    """
+    p = prefs if prefs is not None else load_preferences(PROFILE_PATH)
+    t_low = (title or "").lower()
+    d_low = (description or "").lower()[:2500]
+    targets = p.get("target_roles", [])
+    if any(_term_hit(x, t_low) for x in targets):
+        return False
+    if any(_term_hit(x, t_low) for x in p.get("avoid_roles", [])):
+        return True
+    if len(d_low) < 200:
+        return False
+    # Stems (first 6 letters of long terms) so "développement"/"réseau" count for "développeur"/"réseaux".
+    stems = {x[:6] if len(x) >= 7 else x for x in targets}
+    return len({x for x in stems if _term_hit(x, d_low)}) < 2
+
+
 def score_offer(title: str, location: str, description: str) -> int:
     t_low = title.lower()
     if any(bad in t_low for bad in ("page introuvable", "page not found", "just a moment", "access denied")):
         return -100
     if any(bad in t_low for bad in EXCLUDE_TITLE_TERMS) and "stage" not in t_low:
+        return -100
+
+    if is_irrelevant_offer(title, description):
         return -100
 
     # Filter out Bac+5 / PFE / Fin d'études / Fin de cursus unless Bac+2/3 or BUT is explicitly accepted

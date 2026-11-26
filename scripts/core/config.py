@@ -36,6 +36,7 @@ DEFAULT_PREFERENCES: Dict[str, List[str]] = {
     "avoid_roles": [
         "paie", "ressources humaines", "comptab", "commercial", "vente",
         "juridique", "agronomie", "formulation", "achats", "marketing", "finance", "audit",
+        "administratif", "documentaliste", "bibliothécaire", "secrétariat",
     ],
     "preferred_locations": [
         "bures", "orsay", "saclay", "palaiseau", "massy", "gif",

@@ -10,11 +10,13 @@ to `applications.csv` while preventing duplicates.
 """
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
 import subprocess
 import sys
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -33,6 +35,13 @@ from core.config import (
     OUTPUT_DIR,
     TEMPLATES_DIR,
     load_profile,
+)
+from core.offer_text import (
+    BOARD_NAMES,
+    company_prose,
+    is_generic_company,
+    sanitize_role,
+    truncate_words,
 )
 from core.storage import check_and_log_application
 
@@ -66,6 +75,35 @@ KNOWN_KEYWORDS: Dict[str, List[str]] = {
     "DevOps": ["devops", "déploiement", "sysadmin", "administration système", "infrastructure"],
     "Agile": ["agile", "scrum", "kanban", "peer-learning"],
 }
+
+# Aliases too generic to count as a skill on a single occurrence (e.g. "audit" in finance offers).
+WEAK_ALIASES = {"audit", "shell", "server", "serveur", "infrastructure", "rest", "json", "ip", "ui", "ux"}
+
+# Everything after these markers is page chrome (similar offers...), not the offer itself.
+NOISE_CUT_MARKERS = (
+    "offres similaires", "offres d'emploi similaires", "ces offres peuvent vous intéresser",
+    "autres offres", "vous pourriez aussi", "similar jobs", "voir aussi",
+)
+
+# Generic, non-invented fallbacks when no clean job title can be recovered from the offer.
+ARCHETYPE_ROLE_LABELS: Dict[str, str] = {
+    "cyber": "Analyste Cybersécurité",
+    "infra": "Administrateur Systèmes et Réseaux",
+    "web": "Développeur Web Full-Stack",
+    "systems": "Développeur Logiciel",
+}
+
+# Terms (matched against each project's search_blob) that break ties toward the offer's archetype.
+ARCHETYPE_TERMS: Dict[str, Tuple[str, ...]] = {
+    "cyber": ("sécurité", "cryptographie", "valgrind", "réseau"),
+    "infra": ("docker", "linux", "devops", "réseau", "infrastructure"),
+    "web": ("typescript", "fullstack", "frontend", "react", "api"),
+    "systems": ("c++", "unix", "linux", "valgrind", "système"),
+}
+
+CV_TITLE_MAX_LEN = 78
+CV_ACCROCHE_MAX_LEN = 520
+CV_MIN_FILL_RATIO = 0.70
 
 FRENCH_MONTHS = [
     "janvier", "février", "mars", "avril", "mai", "juin",
@@ -149,6 +187,7 @@ def latex_escape(text: str) -> str:
 
 
 def sanitize_slug(name: str) -> str:
+    name = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode("ascii")
     cleaned = re.sub(r"[^A-Za-z0-9]+", "_", name.strip())
     return cleaned.strip("_") or "Target"
 
@@ -351,23 +390,64 @@ def _term_in_text(term: str, text_lower: str) -> bool:
     return re.search(rf"(?<![a-z0-9]){re.escape(t)}(?![a-z0-9+#])", text_lower) is not None
 
 
+def _term_count(term: str, text_lower: str) -> int:
+    t = term.strip().lower()
+    if not t:
+        return 0
+    return len(re.findall(rf"(?<![a-z0-9]){re.escape(t)}(?![a-z0-9+#])", text_lower))
+
+
+def _letter_keyword_in_context(letter: str, text: str) -> bool:
+    """Single-letter languages ('C', 'R') only count as an uppercase token in a programming context.
+
+    Avoids false positives from French ("c'est", "C" in lists of options) while still matching
+    "C, Python", "Python/C", "langage C", "programmation en C", "C/C++".
+    """
+    letter = letter.upper()
+    not_part = r"(?![\w'’+#.\-])"
+    sep_before = rf"[,;/|•·(]\s*{letter}{not_part}"
+    sep_after = rf"(?<![\w'’.+#\-]){letter}\s*[,;/|•·)]"
+    prefix = (
+        r"(?i:\b(?:langages?|language|programmation|programming|développement|developpement|maîtrise|"
+        r"maitrise|connaissances?|notions?|compétences?|competences?|expérience|experience)"
+        r"\s+(?:en\s+|du\s+|de\s+|of\s+|in\s+)?)"
+    ) + letter + not_part
+    return any(re.search(rx, text) for rx in (sep_before, sep_after, prefix))
+
+
+def focus_job_text(job_text: str) -> str:
+    """Drop trailing page chrome (similar offers, ...) so unrelated keywords don't pollute matching."""
+    low = job_text.lower()
+    cuts = [i for i in (low.find(m) for m in NOISE_CUT_MARKERS) if i > 300]
+    return job_text[: min(cuts)] if cuts else job_text
+
+
 def extract_matched_keywords(job_text: str, verified_keywords: set) -> List[str]:
     text_lower = " " + job_text.lower() + " "
     matched: List[str] = []
-    for kw in verified_keywords:
-        aliases = KNOWN_KEYWORDS.get(kw, [kw.lower()])
-        if _term_in_text(kw, text_lower) or any(_term_in_text(a, text_lower) for a in aliases):
-            matched.append(kw)
+    for kw in sorted(verified_keywords):
+        terms = [kw] + [a for a in KNOWN_KEYWORDS.get(kw, [kw.lower()]) if a.strip().lower() != kw.lower()]
+        for term in terms:
+            t = term.strip()
+            if len(t) == 1:
+                hit = _letter_keyword_in_context(t, job_text)
+            elif t.lower() in WEAK_ALIASES:
+                hit = _term_count(t, text_lower) >= 2
+            else:
+                hit = _term_in_text(t, text_lower)
+            if hit:
+                matched.append(kw)
+                break
     return matched
 
 
 def build_cv_title(role: str, matched_keywords: List[str]) -> str:
     role_clean = re.sub(r"\s*\([^)]*\)", "", role).strip()
-    if not re.search(r"stage|stagiaire", role_clean, re.I):
-        role_clean = f"Stage -- Stagiaire {role_clean}"
+    if not re.search(r"stage|stagiaire|intern", role_clean, re.I):
+        role_clean = f"Stage -- {role_clean}"
     else:
         role_clean = re.sub(r"\s+[-–—]\s+", " -- ", role_clean)
-    return role_clean[:78]
+    return truncate_words(role_clean, CV_TITLE_MAX_LEN)
 
 
 def build_cv_accroche(
@@ -449,6 +529,7 @@ def select_and_format_projects(
     matched_keywords: List[str],
     job_text: str,
     bullet_caps: Tuple[int, int, int] = (3, 3, 3),
+    archetype: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
     job_lower = job_text.lower()
     job_tokens = set(re.findall(r"[a-z0-9\+\#]{3,}", job_lower))
@@ -456,6 +537,7 @@ def select_and_format_projects(
     for proj in projects:
         blob = proj["search_blob"].lower()
         score = sum(3 for kw in matched_keywords if kw.lower() in blob)
+        score += sum(2 for term in ARCHETYPE_TERMS.get(archetype or "", ()) if term in blob)
         for token in set(re.findall(r"[a-z0-9\+\#]{3,}", blob)):
             if token in job_lower:
                 score += 1
@@ -554,6 +636,78 @@ def verify_pdf_one_page(pdf_path: Path, log_text: str) -> Tuple[bool, int, List[
     return (pages == 1 and len(overfull) == 0), pages, overfull
 
 
+def cv_quality_issues(cv_title: str, accroche: str, role: str = "") -> List[str]:
+    """Return human-readable problems that make a generated CV look sloppy (empty list = clean)."""
+    issues: List[str] = []
+    if len(cv_title) > CV_TITLE_MAX_LEN:
+        issues.append(f"CV title too long ({len(cv_title)} > {CV_TITLE_MAX_LEN})")
+    if len(accroche) > CV_ACCROCHE_MAX_LEN:
+        issues.append(f"Accroche too long ({len(accroche)} > {CV_ACCROCHE_MAX_LEN})")
+    board_rx = "|".join(re.escape(b) for b in BOARD_NAMES)
+    noise = re.compile(rf"\bil y a \d+|\b(?:{board_rx})\b|\b\d{{2}}\s*[-–]\s*\d{{2}}\b|…|\.\.\.", re.I)
+    for label, text in (("title", cv_title), ("accroche", accroche), ("role", role)):
+        m = noise.search(text or "")
+        if m:
+            issues.append(f"Scraped noise in {label}: '{m.group(0)}'")
+    return issues
+
+
+def pdf_fill_ratio(pdf_path: Path) -> Optional[float]:
+    """Fraction of page height covered by text (lowest text baseline); None if undeterminable."""
+    try:
+        page = PdfReader(str(pdf_path)).pages[0]
+        height = float(page.mediabox.height)
+        ys: List[float] = []
+
+        def visitor(text, cm, tm, font_dict, font_size):  # noqa: ANN001
+            if text.strip():
+                ys.append(tm[4] * cm[1] + tm[5] * cm[3] + cm[5])
+
+        page.extract_text(visitor_text=visitor)
+        return round((height - min(ys)) / height, 3) if ys and height else None
+    except Exception:
+        return None
+
+
+def render_preview_png(pdf_path: Path) -> Optional[Path]:
+    """Optional PNG preview next to the PDF when poppler's `pdftoppm` is installed."""
+    exe = shutil.which("pdftoppm")
+    if not exe:
+        return None
+    stem = pdf_path.with_suffix("")
+    try:
+        subprocess.run(
+            [exe, "-png", "-r", "70", "-singlefile", str(pdf_path), str(stem)],
+            capture_output=True, timeout=20, check=True,
+        )
+    except Exception:
+        return None
+    png = stem.parent / f"{stem.name}.png"
+    return png if png.exists() else None
+
+
+def audit_outputs() -> int:
+    """Scan existing `output/*/metadata.json` + CV `.tex` for scraped-noise problems; return #flagged."""
+    flagged = 0
+    for meta_path in sorted(OUTPUT_DIR.glob("*/metadata.json")):
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        accroche = ""
+        for tex in meta_path.parent.glob("CV_*.tex"):
+            m = re.search(r"CV_ACCROCHE_START ===(.*?)% === CV_ACCROCHE_END", tex.read_text(encoding="utf-8"), re.S)
+            accroche = re.sub(r"^\s*\{\\small\\itshape|\}\s*$", "", m.group(1)).strip() if m else ""
+        issues = cv_quality_issues(meta.get("cv_title", ""), accroche, meta.get("role", ""))
+        if is_generic_company(meta.get("company", "")):
+            issues.append(f"Generic company '{meta.get('company')}' (job board, not employer)")
+        if issues:
+            flagged += 1
+            print(f"[!] {meta_path.parent.name}: " + "; ".join(issues))
+    print(f"[*] Audit complete: {flagged} output folder(s) flagged.")
+    return flagged
+
+
 def build_lm_tex(
     profile: Dict[str, Any],
     company: str,
@@ -566,6 +720,8 @@ def build_lm_tex(
     base_lm = BASE_LM_PATH.read_text(encoding="utf-8")
     kw_str = ", ".join(matched_keywords[:5]) if matched_keywords else "C/C++, TypeScript, Linux, Git, Docker"
     role_prose = clean_role_for_prose(role)
+    generic_company = is_generic_company(company)
+    co = latex_escape(company_prose(company))
     city = infer_offer_city(job_text)
     edu = profile.get("education", {})
     intern = profile.get("internship", {})
@@ -581,8 +737,9 @@ def build_lm_tex(
 
     date_line = f"{latex_escape(my_city)}, le {latex_escape(format_french_date())}\\\\[0.6em]"
     recipient = (
-        f"\\textbf{{À l'attention de l'équipe de recrutement}}\\\\\n"
-        f"{latex_escape(company)}\\\\\n{latex_escape(city)}"
+        "\\textbf{À l'attention de l'équipe de recrutement}\\\\\n"
+        + ("" if generic_company else f"{latex_escape(company)}\\\\\n")
+        + latex_escape(city)
     )
     obj = (
         f"\\textbf{{Objet :}} Candidature pour un stage conventionné ({latex_escape(avail_short)}) "
@@ -591,25 +748,25 @@ def build_lm_tex(
 
     vous_hooks = {
         "cyber": (
-            f"Les enjeux de sécurité, de fiabilité et de protection des systèmes portés par {latex_escape(company)} "
+            f"Les enjeux de sécurité, de fiabilité et de protection des systèmes portés par {co} "
             f"résonnent directement avec mon parcours. Votre offre de stage en tant que {latex_escape(role_prose)} "
             f"autour de {latex_escape(kw_str)} retient particulièrement mon attention, et je souhaite vous proposer "
             f"ma candidature pour un {latex_escape(avail_full.lower())} (stage conventionné, Université Paris-Saclay)."
         ),
         "infra": (
-            f"La solidité des infrastructures et l'exigence opérationnelle de {latex_escape(company)} "
+            f"La solidité des infrastructures et l'exigence opérationnelle de {co} "
             f"correspondent pleinement à ce que je recherche pour mettre en pratique mes acquis en systèmes et réseaux. "
             f"Votre offre de stage de {latex_escape(role_prose)} mobilisant {latex_escape(kw_str)} a immédiatement retenu "
             f"mon attention dans le cadre de mon {latex_escape(avail_full.lower())} (stage conventionné, Université Paris-Saclay)."
         ),
         "web": (
-            f"La conception de produits logiciels fiables et évolutifs au sein de {latex_escape(company)} "
+            f"La conception de produits logiciels fiables et évolutifs au sein de {co} "
             f"correspond directement à mon envie de contribuer à des applications en production. "
             f"Votre offre de stage de {latex_escape(role_prose)} autour de {latex_escape(kw_str)} m'intéresse tout particulièrement "
             f"pour mon {latex_escape(avail_full.lower())} (stage conventionné, Université Paris-Saclay)."
         ),
         "systems": (
-            f"Les défis d'ingénierie logicielle et de performance technique menés chez {latex_escape(company)} "
+            f"Les défis d'ingénierie logicielle et de performance technique menés chez {co} "
             f"correspondent pleinement à mes aspirations professionnelles. Votre offre de stage de {latex_escape(role_prose)} "
             f"autour de {latex_escape(kw_str)} a retenu toute mon attention dans le cadre de mon "
             f"{latex_escape(avail_full.lower())} (stage conventionné, Université Paris-Saclay)."
@@ -631,7 +788,7 @@ def build_lm_tex(
     )
 
     nous = (
-        f"Intégrer l'équipe de {latex_escape(company)} serait l'opportunité d'apporter ma capacité d'apprentissage rapide "
+        f"Intégrer l'équipe de {co} serait l'opportunité d'apporter ma capacité d'apprentissage rapide "
         f"(peer-learning à 42), ma rigueur technique et mon profil trilingue (français, anglais, espagnol) sur vos "
         f"chantiers en cours, tout en gagnant en maturité au contact de vos ingénieurs. "
         f"Je serais ravi d'échanger avec vous lors d'un entretien ou d'un test technique."
@@ -656,7 +813,11 @@ def main() -> int:
     parser.add_argument("--role", default="", help="Override role title")
     parser.add_argument("--force", action="store_true", help="Allow overwriting duplicate entry")
     parser.add_argument("--json", action="store_true", help="Output metadata as JSON on stdout")
+    parser.add_argument("--audit", action="store_true", help="Audit existing output/ folders for scraped-noise CV issues")
     args = parser.parse_args()
+
+    if args.audit:
+        return 0 if audit_outputs() == 0 else 2
 
     profile = load_profile()
     page_title = ""
@@ -677,15 +838,22 @@ def main() -> int:
         print("[!] No job description provided. Use --url, --text, or --file.")
         return 1
 
+    job_text = focus_job_text(job_text)
     inferred_company, inferred_role = infer_company_and_role(job_text, page_title, args.url)
     company = args.company.strip() or inferred_company
-    role = args.role.strip() or inferred_role
+    generic_company = is_generic_company(company)
+    role = sanitize_role(args.role.strip() or inferred_role)
 
     verified_keywords, projects = parse_verified_master_profile()
     matched_keywords = extract_matched_keywords(job_text, verified_keywords)
+    archetype = detect_role_archetype(role, job_text, matched_keywords)
+    if not role:
+        role = ARCHETYPE_ROLE_LABELS.get(archetype, ARCHETYPE_ROLE_LABELS["systems"])
     cv_title = build_cv_title(role, matched_keywords)
 
-    company_slug = sanitize_slug(company)
+    role_slug = sanitize_slug(role)[:30]
+    # Unknown employer (job board / anonymous): name the folder after board + role so offers never collide.
+    company_slug = sanitize_slug(f"{company or 'Offre'}_{role_slug}") if generic_company else sanitize_slug(company)
     my_name_slug = sanitize_slug(profile["personal"]["full_name"])
     target_dir = OUTPUT_DIR / company_slug
     # Avoid overwriting a different offer at the same company
@@ -694,8 +862,8 @@ def main() -> int:
         try:
             existing_meta = json.loads(meta_file.read_text(encoding="utf-8"))
             if (existing_meta.get("url") or "").strip().rstrip("/").lower() != args.url.strip().rstrip("/").lower():
-                role_slug = sanitize_slug(role)[:24]
-                target_dir = OUTPUT_DIR / f"{company_slug}_{role_slug}"
+                suffix = hashlib.md5(args.url.encode("utf-8")).hexdigest()[:6] if generic_company else role_slug
+                target_dir = OUTPUT_DIR / f"{company_slug}_{suffix}"
         except Exception:
             pass
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -704,7 +872,6 @@ def main() -> int:
     lm_tex_path = target_dir / f"LM_{my_name_slug}_{company_slug}.tex"
 
     base_cv = BASE_CV_PATH.read_text(encoding="utf-8")
-    archetype = detect_role_archetype(role, job_text, matched_keywords)
     accroche = build_cv_accroche(profile, role, matched_keywords, archetype=archetype)
     skills_block = build_skills_block(matched_keywords, verified_keywords=verified_keywords)
 
@@ -714,7 +881,7 @@ def main() -> int:
     pages = 1
     for bullet_caps in ((3, 3, 3), (3, 3, 2), (3, 2, 2), (2, 2, 2), (2, 2, 1), (2, 1, 1), (1, 1, 1)):
         selected_projects, projects_block = select_and_format_projects(
-            projects, matched_keywords, job_text, bullet_caps=bullet_caps
+            projects, matched_keywords, job_text, bullet_caps=bullet_caps, archetype=archetype
         )
         cv_tex = replace_marker_block(
             base_cv, "CV_TITLE", f"{{\\large\\bfseries {latex_escape(cv_title)}}}\\\\[0.2em]"
@@ -745,6 +912,15 @@ def main() -> int:
     if not cv_ok and cv_pdf_path and not args.json:
         print(f"[!] Check {cv_pdf_path} (pages={pages}).")
 
+    warnings = cv_quality_issues(cv_title, accroche, role)
+    fill = pdf_fill_ratio(cv_pdf_path) if cv_pdf_path else None
+    if fill is not None and fill < CV_MIN_FILL_RATIO:
+        warnings.append(f"CV page only {fill:.0%} filled (< {CV_MIN_FILL_RATIO:.0%})")
+    preview_png = render_preview_png(cv_pdf_path) if cv_pdf_path else None
+    if warnings and not args.json:
+        for w in warnings:
+            print(f"[!] Quality: {w}")
+
     lm_tex = build_lm_tex(
         profile, company, role, selected_projects, matched_keywords, job_text=job_text, archetype=archetype
     )
@@ -770,6 +946,10 @@ def main() -> int:
         "lm_pages": lm_pages,
         "metadata_path": str(meta_path),
         "tracker_logged": logged,
+        "company_is_generic": generic_company,
+        "cv_fill_ratio": fill,
+        "cv_preview_png": str(preview_png) if preview_png else "",
+        "quality_warnings": warnings,
     }
     meta_path.write_text(
         json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8"
