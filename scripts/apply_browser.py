@@ -74,9 +74,7 @@ CONFIRMATION_PHRASES = [
     "candidature prise en compte",
     "nous avons bien reçu votre candidature",
     "vous avez déjà postulé",
-    "vous avez postulé",
-    "déjà postulé",
-    "postulé",
+    "candidature envoyée",
     "félicitations, votre candidature",
     "application sent",
     "application submitted",
@@ -416,7 +414,7 @@ def classify_yes_no_question(question: str, verified_skills: Set[str]) -> Option
     return None
 
 
-def update_tracker_status(url: str, company: str, new_status: str) -> None:
+def update_tracker_status(url: str, company: str, new_status: str, force: bool = False) -> None:
     if not APPS_CSV_PATH.exists():
         return
     APPS_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -439,7 +437,7 @@ def update_tracker_status(url: str, company: str, new_status: str) -> None:
                     matched = (r.get("Company") or "").strip().lower() == (company or "").strip().lower()
                 if not matched:
                     continue
-                if (r.get("Status") or "").strip().lower() == "applied" and new_status != "applied":
+                if not force and (r.get("Status") or "").strip().lower() == "applied" and new_status != "applied":
                     continue
                 r["Status"] = new_status
                 updated = True
@@ -2562,7 +2560,7 @@ async def async_main() -> int:
                                 except Exception:
                                     pass
                                 if action in {"skipped", "applied"}:
-                                    update_tracker_status(u, meta.get("company", ""), action)
+                                    update_tracker_status(u, meta.get("company", ""), action, force=True)
                                     print(f"[*] [{meta.get('company', '')}] Marked '{action}' from UI — advancing...")
                                 try:
                                     await active_pg.close()
