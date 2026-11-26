@@ -149,6 +149,139 @@ class HtmlFixturesAndCoreTests(unittest.TestCase):
         html = (Path(__file__).resolve().parent.parent / "ui" / "index.html").read_text(encoding="utf-8")
         self.assertIn('id="th-notes"', html)
         self.assertIn("manualAction('fill')", html)
+        dbg_idx = html.find('id="btn-debug-mode"')
+        lang_idx = html.find('class="lang-bar"')
+        self.assertGreater(dbg_idx, 0)
+        self.assertLess(dbg_idx, lang_idx)
+        self.assertIn('id="mc-btn-next"', html)
+
+    def test_ui_server_debug_run_and_next_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skip_path = Path(tmp) / ".manual_skip"
+            captured_cmds = []
+
+            def _fake_run_bg(cmd, label):
+                captured_cmds.append((cmd, label))
+                return True
+
+            with (
+                mock.patch.object(ui_server, "MANUAL_SKIP_PATH", skip_path),
+                mock.patch.object(ui_server, "run_background_script", side_effect=_fake_run_bg),
+            ):
+                srv = ThreadingHTTPServer(("127.0.0.1", 0), ui_server.StageHandler)
+                port = srv.server_address[1]
+                t = threading.Thread(target=srv.serve_forever, daemon=True)
+                t.start()
+                try:
+                    req_run = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/api/run",
+                        data=json.dumps({
+                            "action": "retry",
+                            "retry_status": "drafted",
+                            "sources": ["linkedin"],
+                            "quality": ["high"],
+                            "limit": 10,
+                            "auto": True,
+                            "debug": True,
+                            "skip_external": True,
+                        }).encode("utf-8"),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req_run, timeout=5) as r:
+                        self.assertTrue(json.loads(r.read().decode("utf-8"))["started"])
+                    self.assertEqual(len(captured_cmds), 1)
+                    cmd, label = captured_cmds[0]
+                    self.assertIn("--auto", cmd)
+                    self.assertIn("--debug", cmd)
+                    self.assertIn("Debug", label)
+
+                    req_next = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/api/manual_action",
+                        data=json.dumps({"action": "next"}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req_next, timeout=5) as r:
+                        self.assertTrue(json.loads(r.read().decode("utf-8"))["ok"])
+                    self.assertEqual(skip_path.read_text(encoding="utf-8"), "next")
+                finally:
+                    srv.shutdown()
+                    srv.server_close()
+
+    def test_debug_mode_never_submits_or_updates_csv(self) -> None:
+        import asyncio
+        from browser import runner
+
+        class _FakeSubmitBtn:
+            def __init__(self) -> None:
+                self.clicked = False
+
+            async def click(self) -> None:
+                self.clicked = True
+
+            async def inner_text(self, timeout: int = 500) -> str:
+                return "Envoyer la candidature"
+
+        class _FakeLocator:
+            async def count(self) -> int:
+                return 0
+
+            async def inner_text(self, timeout: int = 1000) -> str:
+                return "offre de stage"
+
+        class _FakePage:
+            def __init__(self) -> None:
+                self.url = "https://www.linkedin.com/jobs/view/12345/"
+
+            async def goto(self, url: str, **_kwargs) -> None:
+                self.url = url
+
+            async def wait_for_load_state(self, *_args, **_kwargs) -> None:
+                return None
+
+            async def wait_for_timeout(self, _ms: int) -> None:
+                return None
+
+            async def wait_for_selector(self, *_args, **_kwargs) -> None:
+                return None
+
+            def is_closed(self) -> bool:
+                return False
+
+            def locator(self, _sel: str) -> _FakeLocator:
+                return _FakeLocator()
+
+        fake_page = _FakePage()
+        fake_submit = _FakeSubmitBtn()
+        meta = {"company": "Acme", "cv_pdf": "output/Acme/CV.pdf", "lm_pdf": "output/Acme/LM.pdf"}
+        profile = {"form_answers": {}}
+
+        with (
+            mock.patch.object(runner, "accept_cookies_if_present", new=mock.AsyncMock(return_value=None)),
+            mock.patch.object(runner, "click_apply_and_follow_redirect", new=mock.AsyncMock(return_value=(fake_page, True))),
+            mock.patch.object(runner, "fill_matching_fields", new=mock.AsyncMock(return_value=["email"])),
+            mock.patch.object(runner, "answer_common_questions", new=mock.AsyncMock(return_value=[])),
+            mock.patch.object(runner, "inject_files", new=mock.AsyncMock(return_value=["CV.pdf"])),
+            mock.patch.object(runner, "find_submit_button", new=mock.AsyncMock(return_value=fake_submit)),
+            mock.patch.object(runner, "collect_validation_errors", new=mock.AsyncMock(return_value=[])),
+            mock.patch.object(runner, "update_tracker_status") as mock_track,
+        ):
+            _, status = asyncio.run(
+                runner.process_offer_concurrently(
+                    fake_page,
+                    profile,
+                    meta,
+                    "https://www.linkedin.com/jobs/view/12345/",
+                    auto=True,
+                    skip_external=False,
+                    debug=True,
+                )
+            )
+
+        self.assertEqual(status, "debug_ready_submit")
+        self.assertFalse(fake_submit.clicked)
+        mock_track.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -230,6 +230,11 @@ def main() -> int:
         help="Auto-submit simple forms without pausing (marks complex ones as manual_portal)",
     )
     parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Visual 1-by-1 Auto-Apply dry-run (headed Chrome, single tab, no submit, no CSV edits)",
+    )
+    parser.add_argument(
         "--easy-apply",
         action="store_true",
         help="Filter LinkedIn search to Easy Apply (Candidature simplifiée) only",
@@ -499,7 +504,10 @@ def main() -> int:
         return 0
 
     print("\n" + "=" * 60)
-    mode_label = "AUTO-SUBMIT" if args.auto else "MANUAL-REVIEW"
+    if args.debug:
+        mode_label = "DEBUG AUTO-APPLY (DRY-RUN, 1-BY-1)"
+    else:
+        mode_label = "AUTO-SUBMIT" if args.auto else "MANUAL-REVIEW"
     print(f"STARTING {mode_label} BROWSER QUEUE ({len(queue_metas)} OFFERS IN 1 CHROME WINDOW)")
     print("=" * 60)
     cmd = [
@@ -508,10 +516,12 @@ def main() -> int:
         "--metas",
         *[str(mp) for mp in queue_metas],
         "--tabs",
-        "5",
+        "1" if args.debug else "5",
     ]
     if args.auto:
         cmd.append("--auto")
+    if args.debug:
+        cmd.append("--debug")
     if args.skip_external:
         cmd.append("--skip-external")
     res = subprocess.run(cmd, cwd=str(WORKSPACE))

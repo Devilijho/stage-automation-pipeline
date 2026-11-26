@@ -72,11 +72,21 @@ async def process_offer_concurrently(
     url: str,
     auto: bool,
     skip_external: bool,
+    debug: bool = False,
 ) -> Tuple[Page, str]:
-    """Run one offer end-to-end asynchronously so 5 tabs execute simultaneously."""
+    """Run one offer end-to-end asynchronously so 5 tabs execute simultaneously.
+
+    When `debug=True`, runs the full auto-fill flow visibly without ever clicking
+    the final Submit button or modifying `data/applications.csv`.
+    """
     company = meta["company"]
     cv_pdf = Path(meta["cv_pdf"])
     lm_pdf = Path(meta["lm_pdf"])
+
+    def _track(new_status: str, *, force: bool = False, notes: Optional[str] = None) -> None:
+        if debug:
+            return
+        update_tracker_status(url, company, new_status, force=force, notes=notes)
 
     adapter = resolve_adapter(url)
     nav_url = adapter.normalize_url(url)
@@ -95,11 +105,11 @@ async def process_offer_concurrently(
     adapter = resolve_adapter(page.url)
     if adapter.is_login_wall(page.url):
         print(f"[!] Bailout [{company}]: Login wall detected ({page.url}) — run './stage login'")
-        update_tracker_status(url, company, "needs_login", notes=f"Login wall ({detect_ats_provider(page.url)})")
+        _track("needs_login", notes=f"Login wall ({detect_ats_provider(page.url)})")
         return page, "needs_login"
     if adapter.is_expired_redirect(page.url, nav_url):
         print(f"[!] Bailout [{company}]: {adapter.name} offer expired/redirected -> 'expired'")
-        update_tracker_status(url, company, "expired", notes="Offer expired/redirected to search")
+        _track("expired", notes="Offer expired/redirected to search")
         return page, "expired"
     await accept_cookies_if_present(page)
     active_page, clicked = await click_apply_and_follow_redirect(page, adapter=adapter)
@@ -113,7 +123,7 @@ async def process_offer_concurrently(
 
     if adapter.is_expired_redirect(active_page.url, nav_url):
         print(f"[!] Bailout [{company}]: {adapter.name} offer expired/redirected -> 'expired'")
-        update_tracker_status(url, company, "expired", notes="Offer expired/redirected to search")
+        _track("expired", notes="Offer expired/redirected to search")
         return active_page, "expired"
 
     await adapter.after_apply_click(active_page)
@@ -126,7 +136,7 @@ async def process_offer_concurrently(
             pass
         if adapter.is_expired_text(page_low):
             print(f"[!] Bailout [{company}]: Offer appears closed/expired ({ats}) -> 'expired'")
-            update_tracker_status(url, company, "expired", notes=f"Offer closed/expired ({ats})")
+            _track("expired", notes=f"Offer closed/expired ({ats})")
             return active_page, "expired"
         has_pwd_input = False
         try:
@@ -135,12 +145,12 @@ async def process_offer_concurrently(
             pass
         if adapter.is_login_wall(active_page.url, body_lower=page_low, has_password_input=has_pwd_input):
             print(f"[!] Bailout [{company}]: Login wall detected ({ats}) -> 'needs_login'")
-            update_tracker_status(url, company, "needs_login", notes=f"Login wall ({ats})")
+            _track("needs_login", notes=f"Login wall ({ats})")
             return active_page, "needs_login"
         vis_btns = await dump_visible_buttons(active_page)
         print(f"[!] Bailout [{company}]: Apply button not found on page ({active_page.url}) | Visible buttons: {vis_btns}")
         if auto:
-            update_tracker_status(url, company, "manual_portal", notes=f"Apply button not found ({ats})")
+            _track("manual_portal", notes=f"Apply button not found ({ats})")
         return active_page, "manual_portal"
 
     body_low_check = ""
@@ -155,7 +165,7 @@ async def process_offer_concurrently(
         pass
     if adapter.is_login_wall(active_page.url, body_lower=body_low_check, has_password_input=has_pwd_after_click):
         print(f"[!] Bailout [{company}]: Login wall detected ({ats}) -> 'needs_login' — sign in via './stage login'")
-        update_tracker_status(url, company, "needs_login", notes=f"Login/account wall ({ats})")
+        _track("needs_login", notes=f"Login/account wall ({ats})")
         return active_page, "needs_login"
 
     verified_skills = load_master_profile_skills()
@@ -206,15 +216,57 @@ async def process_offer_concurrently(
             if attached:
                 await active_page.wait_for_timeout(700)
 
+            if debug:
+                filled_preview = ", ".join(str(x) for x in filled[:6])
+                if len(filled) > 6:
+                    filled_preview += f", +{len(filled) - 6} more"
+                print(
+                    f"[DEBUG] [{company}] Step {step} ({adapter.key} | {ats}) — "
+                    f"filled {len(filled)} field(s)"
+                    f"{f' [{filled_preview}]' if filled_preview else ''}, "
+                    f"attached {len(attached)} file(s)"
+                    f"{f' {attached}' if attached else ''}"
+                )
+                if step_unanswered:
+                    print(f"[DEBUG] [{company}] Step {step} unanswered required: {step_unanswered}")
+
             is_external = not adapter.is_native_board
             if step == 1 and skip_external and is_external:
                 print(f"[!] Bailout [{company}]: Skipped external ATS ({ats}: {active_page.url})")
-                update_tracker_status(url, company, "manual_portal", notes=f"Skipped external ATS ({ats})")
+                _track("manual_portal", notes=f"Skipped external ATS ({ats})")
                 return active_page, "manual_portal"
 
             submit_btn = await find_submit_button(active_page, adapter=adapter)
             if submit_btn is not None:
                 await adapter.before_submit(active_page)
+                if debug:
+                    btn_label = ""
+                    try:
+                        btn_label = (await submit_btn.inner_text(timeout=500)).strip()
+                    except Exception:
+                        pass
+                    if not btn_label:
+                        try:
+                            btn_label = (await submit_btn.get_attribute("aria-label") or "").strip()
+                        except Exception:
+                            pass
+                    val_errors = await collect_validation_errors(active_page)
+                    if step_unanswered:
+                        print(
+                            f"[DEBUG] [{company}] Reached Submit ({btn_label or 'submit'}) — NOT sent (dry-run). "
+                            f"Blocked by unanswered required fields: {step_unanswered}"
+                        )
+                    elif val_errors:
+                        print(
+                            f"[DEBUG] [{company}] Reached Submit ({btn_label or 'submit'}) — NOT sent (dry-run). "
+                            f"Validation errors: {val_errors}"
+                        )
+                    else:
+                        print(
+                            f"[DEBUG] [{company}] Reached Submit ({btn_label or 'submit'}) — NOT sent (dry-run). "
+                            "Form ready to submit!"
+                        )
+                    return active_page, "debug_ready_submit"
                 if auto:
                     if step_unanswered:
                         bailout_reason = f"Blocked by unanswered required fields before submit: {step_unanswered}"
@@ -259,7 +311,7 @@ async def process_offer_concurrently(
                             pass
 
                     if confirmed:
-                        update_tracker_status(url, company, "applied", notes="")
+                        _track("applied", notes="")
                         print(f"[+] [{company}] Confirmed -> 'applied'!")
                         return active_page, "applied"
                     shot = await save_debug_screenshot(active_page, company, "after_submit")
@@ -274,9 +326,9 @@ async def process_offer_concurrently(
 
             pre_sig = await get_step_signature(active_page)
             if not await try_click_next_step(active_page, adapter=adapter):
-                if step > 1 and adapter.key == "linkedin" and not await _has_visible_modal(active_page):
+                if not debug and step > 1 and adapter.key == "linkedin" and not await _has_visible_modal(active_page):
                     if await check_submission_confirmed(active_page, had_modal=True, adapter=adapter):
-                        update_tracker_status(url, company, "applied", notes="")
+                        _track("applied", notes="")
                         print(f"[+] [{company}] Confirmed -> 'applied'!")
                         return active_page, "applied"
                 if step_unanswered:
@@ -317,10 +369,11 @@ async def process_offer_concurrently(
     if not bailout_reason:
         bailout_reason = f"Form incomplete ({ats})"
 
-    if auto:
+    if auto or debug:
         print(f"[!] Bailout [{company}]: {bailout_reason}")
-        update_tracker_status(url, company, final_status, notes=bailout_reason[:300])
-        print(f"[*] [{company}] Finished -> '{final_status}'")
+        _track(final_status, notes=bailout_reason[:300])
+        if not debug:
+            print(f"[*] [{company}] Finished -> '{final_status}'")
     return active_page, final_status
 
 
@@ -568,6 +621,187 @@ async def _run_manual_review(
         pass
 
 
+def _write_debug_state(
+    *,
+    index: int,
+    total: int,
+    company: str,
+    role: str,
+    url: str,
+    cv_pdf: str,
+    lm_pdf: str,
+    state: str,
+    result: str = "",
+) -> None:
+    try:
+        MANUAL_CURRENT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        MANUAL_CURRENT_PATH.write_text(
+            json.dumps({
+                "active": True,
+                "mode": "debug",
+                "index": index,
+                "total": total,
+                "company": company,
+                "role": role,
+                "url": url,
+                "cv_pdf": cv_pdf,
+                "lm_pdf": lm_pdf,
+                "debug_state": state,
+                "debug_result": result,
+            }, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+async def _run_debug_queue(
+    playwright_inst: Any,
+    context: Any,
+    launch_kwargs: Dict[str, Any],
+    profile: Dict[str, Any],
+    meta_paths: List[Path],
+    skip_external: bool,
+    url_override: str,
+) -> None:
+    """Visual 1-by-1 Auto-Apply dry-run: single headed Chrome window, never submits or edits CSV."""
+    verified_skills = load_master_profile_skills()
+    for idx, mp in enumerate(meta_paths):
+        meta = load_json(mp)
+        u = url_override if (len(meta_paths) == 1 and url_override) else meta.get("url", "")
+        if not u:
+            continue
+        for stale in (MANUAL_SKIP_PATH, MANUAL_FILL_PATH):
+            if stale.exists():
+                try:
+                    stale.unlink()
+                except Exception:
+                    pass
+
+        cv_rel = meta.get("cv_pdf", "")
+        lm_rel = meta.get("lm_pdf", "")
+        cv_abs = (WORKSPACE / cv_rel) if cv_rel else None
+        lm_abs = (WORKSPACE / lm_rel) if lm_rel else None
+        try:
+            cv_ui = str(cv_abs.relative_to(WORKSPACE)) if cv_abs and cv_abs.is_relative_to(WORKSPACE) else cv_rel
+        except Exception:
+            cv_ui = cv_rel
+        try:
+            lm_ui = str(lm_abs.relative_to(WORKSPACE)) if lm_abs and lm_abs.is_relative_to(WORKSPACE) else lm_rel
+        except Exception:
+            lm_ui = lm_rel
+
+        company = meta.get("company", "")
+        role = meta.get("role", "")
+        _write_debug_state(
+            index=idx + 1,
+            total=len(meta_paths),
+            company=company,
+            role=role,
+            url=u,
+            cv_pdf=cv_ui,
+            lm_pdf=lm_ui,
+            state="running",
+        )
+        print(f"\n=== Debug Auto-Apply [{idx + 1}/{len(meta_paths)}]: {company} — {role} ===")
+
+        try:
+            _ = context.pages
+        except Exception:
+            context = await playwright_inst.chromium.launch_persistent_context(**launch_kwargs)
+
+        pg = context.pages[0] if context.pages else await context.new_page()
+        active_pg, status_res = await process_offer_concurrently(
+            pg, profile, meta, u, auto=True, skip_external=skip_external, debug=True
+        )
+        _write_debug_state(
+            index=idx + 1,
+            total=len(meta_paths),
+            company=company,
+            role=role,
+            url=u,
+            cv_pdf=cv_ui,
+            lm_pdf=lm_ui,
+            state="paused",
+            result=status_res,
+        )
+
+        if not active_pg.is_closed():
+            print(
+                f"[DEBUG] [{company}] Paused ({status_res}) — inspect Chrome (nothing submitted, CSV untouched). "
+                "Click 'Next Offer' in UI or close the tab to continue."
+            )
+            try:
+                while not active_pg.is_closed():
+                    if MANUAL_FILL_PATH.exists():
+                        try:
+                            MANUAL_FILL_PATH.unlink()
+                        except Exception:
+                            pass
+                        try:
+                            cur_adapter = resolve_adapter(active_pg.url)
+                            await accept_cookies_if_present(active_pg)
+                            await cur_adapter.before_step_fill(active_pg)
+                            re_filled = await fill_matching_fields(active_pg, profile["form_answers"], profile=profile)
+                            re_filled.extend(
+                                await answer_common_questions(
+                                    active_pg,
+                                    profile["form_answers"],
+                                    verified_skills=verified_skills,
+                                    company=company,
+                                    url=u,
+                                    profile=profile,
+                                )
+                            )
+                            attached = await inject_files(active_pg, Path(meta["cv_pdf"]), Path(meta["lm_pdf"]))
+                            print(
+                                f"[+] [{company}] Re-filled current page ({cur_adapter.key}): "
+                                f"{len(re_filled)} field(s), {len(attached)} file(s)."
+                            )
+                        except Exception as exc:
+                            _log.warning("Debug fill-current error: %s", exc)
+                            print(f"[!] [{company}] Fill Current Page error: {exc}")
+                    if MANUAL_SKIP_PATH.exists():
+                        try:
+                            MANUAL_SKIP_PATH.unlink()
+                        except Exception:
+                            pass
+                        print(f"[DEBUG] [{company}] Advancing to next offer (CSV untouched).")
+                        if idx < len(meta_paths) - 1:
+                            try:
+                                if len(context.pages) > 1:
+                                    await active_pg.close()
+                            except Exception:
+                                pass
+                        else:
+                            try:
+                                await active_pg.close()
+                            except Exception:
+                                pass
+                        break
+                    await asyncio.sleep(0.4)
+            except Exception:
+                pass
+
+        for extra_pg in list(context.pages):
+            if extra_pg is not context.pages[0] or idx == len(meta_paths) - 1:
+                try:
+                    if not extra_pg.is_closed():
+                        await extra_pg.close()
+                except Exception:
+                    pass
+
+    if MANUAL_CURRENT_PATH.exists():
+        try:
+            MANUAL_CURRENT_PATH.unlink()
+        except Exception:
+            pass
+    try:
+        await context.close()
+    except Exception:
+        pass
+
+
 async def async_main() -> int:
     parser = argparse.ArgumentParser(description="Playwright Async Multi-Tab Application Assistant")
     parser.add_argument("--meta", help="Path to output/<Company>/metadata.json")
@@ -576,6 +810,11 @@ async def async_main() -> int:
     parser.add_argument("--url", default="", help="Override job URL")
     parser.add_argument("--auto", action="store_true", help="Auto-submit simple forms without pausing (runs headless by default)")
     parser.add_argument("--headed", action="store_true", help="Show the browser window even in --auto mode")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Visual 1-by-1 Auto-Apply dry-run: headed Chrome, single tab, never clicks Submit or edits CSV",
+    )
     parser.add_argument("--skip-external", action="store_true", help="Skip external ATS redirects")
     parser.add_argument("--login", action="store_true", help="Open Chrome to log into all supported job boards (saves cookies)")
     parser.add_argument(
@@ -600,19 +839,33 @@ async def async_main() -> int:
 
     profile = load_json(PROFILE_PATH)
 
-    if args.auto and MANUAL_CURRENT_PATH.exists():
+    if args.auto and not args.debug and MANUAL_CURRENT_PATH.exists():
         try:
             MANUAL_CURRENT_PATH.unlink()
         except Exception:
             pass
 
-    run_headless = bool(args.auto and not args.headed)
-    launch_kwargs = build_chrome_launch_kwargs(CHROME_PROFILE_DIR, headless=run_headless)
+    run_headless = bool(args.auto and not args.headed and not args.debug)
+    launch_kwargs = build_chrome_launch_kwargs(
+        CHROME_PROFILE_DIR,
+        headless=run_headless,
+        no_viewport=bool(args.debug),
+    )
 
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(**launch_kwargs)
         await restore_storage_cookies(context, CHROME_PROFILE_DIR)
-        if args.auto:
+        if args.debug:
+            await _run_debug_queue(
+                p,
+                context,
+                launch_kwargs,
+                profile,
+                meta_paths,
+                skip_external=args.skip_external,
+                url_override=args.url,
+            )
+        elif args.auto:
             await _run_auto_pool(
                 context,
                 profile,

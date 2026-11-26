@@ -31,6 +31,7 @@
   <header>
     <div id="page-title" style="font-weight:600;"></div>
     <div class="row">
+      <button class="pill debug-toggle hidden" id="btn-debug-mode" onclick="toggleDebugMode()" title=""></button>
       <div class="lang-bar">
         <button class="lang-btn" id="lang-es" onclick="setLang('es')">ES</button>
         <button class="lang-btn" id="lang-fr" onclick="setLang('fr')">FR</button>
@@ -202,11 +203,12 @@
             <div style="font-size:12px; color:var(--accent); margin-top:3px;" id="mc-status"></div>
           </div>
           <div class="row" style="gap:8px;">
-            <button class="secondary" onclick="manualAction('fill')" style="border-color:var(--accent); color:var(--accent);">Fill Current Page</button>
-            <button class="secondary" onclick="openManualPreview()">View CV &amp; LM</button>
-            <button class="secondary" onclick="manualAction('finder')">Open Finder</button>
-            <button class="primary" onclick="manualAction('applied')">Mark Applied</button>
-            <button class="secondary" onclick="manualAction('skip')" style="border-color:var(--amber); color:var(--amber);">Skip</button>
+            <button class="secondary" id="mc-btn-fill" onclick="manualAction('fill')" style="border-color:var(--accent); color:var(--accent);">Fill Current Page</button>
+            <button class="secondary" id="mc-btn-preview" onclick="openManualPreview()">View CV &amp; LM</button>
+            <button class="secondary" id="mc-btn-finder" onclick="manualAction('finder')">Open Finder</button>
+            <button class="primary" id="mc-btn-applied" onclick="manualAction('applied')">Mark Applied</button>
+            <button class="secondary" id="mc-btn-skip" onclick="manualAction('skip')" style="border-color:var(--amber); color:var(--amber);">Skip</button>
+            <button class="primary hidden" id="mc-btn-next" onclick="manualAction('next')" style="background:#b47812;">Next Offer →</button>
           </div>
         </div>
       </div>

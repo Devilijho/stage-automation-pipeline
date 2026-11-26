@@ -27,6 +27,8 @@ button.secondary:hover { border-color: var(--accent); }
 .pill-group { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 .pill { background: var(--bg); color: var(--muted); border: 1px solid var(--border); padding: 7px 13px; border-radius: 999px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all .15s; }
 .pill.active { background: rgba(88,166,255,.15); border-color: var(--accent); color: var(--accent); }
+.pill.debug-toggle { padding: 6px 12px; }
+.pill.debug-toggle.active { background: rgba(210,153,34,.18); border-color: var(--amber); color: var(--amber); }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { border-bottom: 1px solid var(--border); padding: 10px 8px; text-align: left; }
 th { color: var(--muted); font-weight: 600; font-size: 12px; }

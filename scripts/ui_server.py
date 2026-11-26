@@ -462,6 +462,10 @@ class StageHandler(BaseHTTPRequestHandler):
                 MANUAL_FILL_PATH.parent.mkdir(parents=True, exist_ok=True)
                 MANUAL_FILL_PATH.write_text("fill", encoding="utf-8")
                 self.send_json({"ok": True})
+            elif act == "next":
+                skip_path.parent.mkdir(parents=True, exist_ok=True)
+                skip_path.write_text("next", encoding="utf-8")
+                self.send_json({"ok": True})
             elif act in {"skip", "applied"}:
                 skip_path.parent.mkdir(parents=True, exist_ok=True)
                 skip_path.write_text("skipped" if act == "skip" else "applied", encoding="utf-8")
@@ -625,9 +629,12 @@ class StageHandler(BaseHTTPRequestHandler):
                     cmd.extend(["--quality", *retry_quality])
                 if body.get("auto"):
                     cmd.append("--auto")
+                if body.get("debug"):
+                    cmd.append("--debug")
                 if body.get("skip_external"):
                     cmd.append("--skip-external")
-                started = run_background_script(cmd, f"Retry ({retry_status})")
+                label = f"Debug ({retry_status})" if body.get("debug") else f"Retry ({retry_status})"
+                started = run_background_script(cmd, label)
             elif action == "open":
                 cv_pdf = body.get("cv_pdf", "")
                 offer_url = body.get("url", "")
@@ -638,6 +645,8 @@ class StageHandler(BaseHTTPRequestHandler):
                         cmd.extend(["--url", offer_url])
                     if body.get("auto"):
                         cmd.append("--auto")
+                    if body.get("debug"):
+                        cmd.append("--debug")
                     if body.get("skip_external"):
                         cmd.append("--skip-external")
                     started = run_background_script(cmd, f"Open Chrome for {meta_path.parent.name}")
@@ -655,6 +664,8 @@ class StageHandler(BaseHTTPRequestHandler):
                     cmd.append("--scrape-only")
                 elif action == "auto":
                     cmd.append("--auto")
+                if body.get("debug"):
+                    cmd.append("--debug")
                 if body.get("easy_apply"):
                     cmd.append("--easy-apply")
                 if body.get("skip_external"):

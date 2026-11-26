@@ -1,6 +1,7 @@
 let currentLang = localStorage.getItem('stagebot_lang') || 'fr';
 let currentTab = 'guide';
 let runMode = 'auto';
+let debugMode = false;
 let allRows = [];
 let countsCache = {drafted: 0, manual_portal: 0};
 let visibleUrlsCache = [];
@@ -10,11 +11,39 @@ function escapeHtml(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+function updateDebugUI() {
+  const t = I18N[currentLang];
+  const btn = document.getElementById('btn-debug-mode');
+  if (btn) {
+    btn.classList.toggle('active', debugMode);
+    btn.textContent = debugMode ? t.debugOn : t.debugOff;
+    btn.title = t.debugTitle;
+  }
+  const hint = document.getElementById('apply-hint');
+  if (hint) {
+    if (debugMode && runMode === 'auto') {
+      hint.textContent = t.debugHint;
+      hint.style.color = 'var(--amber)';
+    } else {
+      hint.textContent = t.applyHint;
+      hint.style.color = 'var(--muted)';
+    }
+  }
+  const nextBtn = document.getElementById('mc-btn-next');
+  if (nextBtn) nextBtn.textContent = t.debugNext;
+}
+
+function toggleDebugMode() {
+  debugMode = !debugMode;
+  updateDebugUI();
+}
+
 function setRunMode(mode) {
   runMode = mode;
   ['auto', 'apply'].forEach(m => {
     document.getElementById('mode-' + m).classList.toggle('active', m === mode);
   });
+  updateDebugUI();
 }
 
 function setLang(lang) {
@@ -61,7 +90,7 @@ function setLang(lang) {
   document.getElementById('btn-mail').textContent = t.btnMail;
   document.getElementById('lbl-apply-platforms').textContent = t.platforms;
   updateApplyButtonCounts();
-  document.getElementById('apply-hint').textContent = t.applyHint;
+  updateDebugUI();
   document.getElementById('lbl-logs-fetch').textContent = t.logs;
   document.getElementById('lbl-logs-apply').textContent = t.logs;
   document.getElementById('run-state-fetch').textContent = t.idle;
@@ -99,6 +128,8 @@ function showTab(name, btn) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   document.getElementById('page-title').textContent = I18N[currentLang].titles[name] || 'StageBot';
+  const dbgBtn = document.getElementById('btn-debug-mode');
+  if (dbgBtn) dbgBtn.classList.toggle('hidden', name !== 'apply');
   if (name === 'questions' && typeof loadQuestions === 'function') loadQuestions();
 }
 
@@ -330,10 +361,11 @@ async function runRetry(retry_status) {
   }).length;
   if (!matchingCount) { alert(`No '${retry_status}' offers match the selected platforms and quality tiers.`); return; }
   const skip_external = document.getElementById('pill-skip').classList.contains('active');
+  const isDebug = debugMode && runMode === 'auto';
   await fetch('/api/run', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({action:'retry', retry_status, sources, quality, limit: 200, auto: runMode === 'auto', skip_external})
+    body: JSON.stringify({action:'retry', retry_status, sources, quality, limit: 200, auto: runMode === 'auto', debug: isDebug, skip_external})
   });
   pollLogs();
 }
@@ -347,8 +379,32 @@ async function refreshManualCurrent() {
     const card = document.getElementById('manual-current-card');
     if (mc && mc.active) {
       manualCurrentCache = mc;
-      document.getElementById('mc-progress').textContent = `Semi-Automatic (${mc.index}/${mc.total})`;
+      const isDebug = mc.mode === 'debug';
+      const t = I18N[currentLang];
+      const progEl = document.getElementById('mc-progress');
+      const stEl = document.getElementById('mc-status');
+      card.style.borderColor = isDebug ? 'var(--amber)' : 'var(--accent)';
+      progEl.style.color = isDebug ? 'var(--amber)' : 'var(--accent)';
+      progEl.textContent = isDebug
+        ? `${t.debugCardLabel} (${mc.index}/${mc.total})`
+        : `Semi-Automatic (${mc.index}/${mc.total})`;
       document.getElementById('mc-title').textContent = `${mc.company} — ${mc.role}`;
+      document.getElementById('mc-btn-finder')?.classList.toggle('hidden', isDebug);
+      document.getElementById('mc-btn-applied')?.classList.toggle('hidden', isDebug);
+      document.getElementById('mc-btn-skip')?.classList.toggle('hidden', isDebug);
+      document.getElementById('mc-btn-next')?.classList.toggle('hidden', !isDebug);
+      if (isDebug && stEl) {
+        stEl.style.color = 'var(--amber)';
+        if (mc.debug_state === 'running') {
+          stEl.textContent = 'Running auto-fill in visible Chrome...';
+        } else if (mc.debug_result === 'debug_ready_submit') {
+          stEl.textContent = 'Paused: Reached Submit button (NOT sent — dry-run, CSV untouched).';
+        } else if (mc.debug_result) {
+          stEl.textContent = `Paused: Stopped with '${mc.debug_result}' (CSV untouched). Inspect Chrome or click Next Offer.`;
+        }
+      } else if (stEl) {
+        stEl.style.color = 'var(--accent)';
+      }
       card.classList.remove('hidden');
     } else {
       manualCurrentCache = null;
@@ -379,7 +435,7 @@ async function manualAction(action) {
   if (action === 'fill' && stEl) {
     stEl.textContent = data.ok ? 'Triggered auto-fill on current browser tab — check Live Logs.' : 'Fill failed.';
   }
-  if (action === 'skip' || action === 'applied') {
+  if (action === 'skip' || action === 'applied' || action === 'next') {
     setTimeout(() => { loadApps(); refreshManualCurrent(); }, 600);
   }
 }
@@ -453,6 +509,10 @@ function renderCleanLogs(lines) {
     let m;
     if ((m = line.match(/^===\s*(?:Manual Review|Semi-Automatic Apply)\s*\[([^\]]+)\]:\s*(.+?)\s*===$/))) {
       events.push({ cls: 'info', badge: `Step ${m[1]}`, text: `<strong>${escapeHtml(m[2])}</strong> — Opening browser &amp; Finder...` });
+    } else if ((m = line.match(/^===\s*Debug Auto-Apply\s*\[([^\]]+)\]:\s*(.+?)\s*===$/))) {
+      events.push({ cls: 'warn', badge: `Debug ${m[1]}`, text: `<strong>${escapeHtml(m[2])}</strong> — Opening visible Chrome (dry-run, no submit)...` });
+    } else if ((m = line.match(/^\[DEBUG\]\s+\[([^\]]+)\]\s+(.+)$/))) {
+      events.push({ cls: 'warn', badge: 'Debug', text: `<strong>${escapeHtml(m[1])}</strong> — ${escapeHtml(m[2])}` });
     } else if (line.startsWith('===')) {
       continue;
     } else if ((m = line.match(/^\[\+\]\s+\[([^\]]+)\]\s+(?:Confirmed|Submitted)\s+->\s+'applied'/)) || (m = line.match(/^\[\+\]\s+Confirmed submission for\s+([^!]+)!/))) {
