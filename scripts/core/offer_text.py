@@ -92,7 +92,7 @@ def _collapse_gender_doublets(text: str) -> str:
             return text
         a, b = m.group(1), m.group(2)
         n = 0
-        for x, y in zip(a.lower(), b.lower(), strict=False):
+        for x, y in zip(a.lower(), b.lower()):
             if x != y:
                 break
             n += 1

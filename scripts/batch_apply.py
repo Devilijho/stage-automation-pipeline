@@ -84,7 +84,7 @@ __all__ = [
 PYTHON_BIN = sys.executable
 
 
-def run_tailor_for_offer(offer: Dict[str, str], extra_args: Optional[List[str]] = None) -> Path | None:
+def run_tailor_for_offer(offer: Dict[str, str], extra_args: Optional[List[str]] = None) -> Optional[Path]:
     cmd = [
         PYTHON_BIN,
         str(SCRIPTS_DIR / "tailor.py"),
