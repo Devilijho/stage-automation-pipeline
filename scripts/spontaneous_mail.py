@@ -18,10 +18,12 @@ from urllib.parse import quote
 
 import requests
 
-WORKSPACE = Path(__file__).resolve().parent.parent
-PROFILE_PATH = WORKSPACE / "config" / "profile.json"
-SCRIPTS_DIR = WORKSPACE / "scripts"
-OUTPUT_DIR = WORKSPACE / "output"
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from core.config import OUTPUT_DIR, PROFILE_PATH, SCRIPTS_DIR, WORKSPACE, load_profile
+
 PYTHON_BIN = sys.executable
 
 
@@ -93,7 +95,7 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=5, help="Number of local companies")
     args = parser.parse_args()
 
-    profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+    profile = load_profile(PROFILE_PATH)
     print(f"[*] Searching local IT/Software companies within {args.radius}km of Bures-sur-Yvette / Saclay...")
     companies = find_local_tech_companies(args.lat, args.lon, args.radius, args.limit)
     print(f"[*] Found {len(companies)} local tech companies.")
@@ -117,6 +119,7 @@ def main() -> int:
                 "Stagiaire Développeur Informatique (Candidature Spontanée)",
                 "--text",
                 job_desc,
+                "--json",
             ],
             cwd=str(WORKSPACE),
             capture_output=True,
@@ -127,11 +130,23 @@ def main() -> int:
             continue
         cv_pdf = None
         lm_pdf = None
-        for line in res.stdout.splitlines():
-            if line.startswith("CV PDF"):
-                cv_pdf = Path(line.split(":", 1)[1].strip())
-            elif line.startswith("LM PDF"):
-                lm_pdf = Path(line.split(":", 1)[1].strip())
+        for line in reversed(res.stdout.splitlines()):
+            s = line.strip()
+            if s.startswith("{") and s.endswith("}"):
+                try:
+                    meta = json.loads(s)
+                    if meta.get("cv_pdf") and meta.get("lm_pdf"):
+                        cv_pdf = Path(meta["cv_pdf"])
+                        lm_pdf = Path(meta["lm_pdf"])
+                        break
+                except json.JSONDecodeError:
+                    pass
+        if not (cv_pdf and lm_pdf):
+            for line in res.stdout.splitlines():
+                if line.startswith("CV PDF"):
+                    cv_pdf = Path(line.split(":", 1)[1].strip())
+                elif line.startswith("LM PDF"):
+                    lm_pdf = Path(line.split(":", 1)[1].strip())
         if cv_pdf and lm_pdf:
             eml = create_eml_draft(profile, c["name"], c["city"], cv_pdf, lm_pdf)
             print(f"  -> Draft .eml ready (double-click to open in Apple Mail): {eml}")

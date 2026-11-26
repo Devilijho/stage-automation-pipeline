@@ -15,10 +15,8 @@ Batch Job Searcher, Tailoring & Application Queue (batch_apply.py)
 
 import argparse
 import asyncio
-import csv
 import json
 import math
-import os
 import re
 import subprocess
 import sys
@@ -27,18 +25,33 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
-from urllib.parse import quote_plus, urljoin, urlparse
+from urllib.parse import quote_plus, urljoin
 
 import requests
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 
-WORKSPACE = Path(__file__).resolve().parent.parent
-PROFILE_PATH = WORKSPACE / "config" / "profile.json"
-APPS_CSV_PATH = WORKSPACE / "data" / "applications.csv"
-OUTPUT_DIR = WORKSPACE / "output"
-SCRIPTS_DIR = WORKSPACE / "scripts"
-CHROME_PROFILE_DIR = WORKSPACE / ".chrome_profile"
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from core.browser_session import (
+    build_chrome_launch_kwargs,
+    prepare_chrome_profile_dir,
+    restore_storage_cookies,
+)
+from core.config import (
+    APPS_CSV_PATH,
+    CHROME_PROFILE_DIR,
+    DEFAULT_PREFERENCES,
+    PROFILE_PATH,
+    SCRIPTS_DIR,
+    WORKSPACE,
+    load_preferences,
+    load_profile,
+)
+from core.storage import load_existing_offers, normalize_company_role_key, read_applications
+
 PYTHON_BIN = sys.executable
 
 COOKIE_SOURCES = {"jobteaser", "indeed", "apec", "meteojob"}
@@ -67,19 +80,30 @@ def get_http_session() -> requests.Session:
         _THREAD_LOCAL.session = sess
     return sess
 
-PROFILE = json.loads(PROFILE_PATH.read_text(encoding="utf-8")) if PROFILE_PATH.exists() else {}
-SEARCH_CFG = PROFILE.get("search", {})
-
-DEFAULT_QUERIES = SEARCH_CFG.get("queries", [
+DEFAULT_QUERIES = [
     "stage informatique",
     "stage développeur",
     "stage cybersécurité",
     "stage réseaux systèmes",
-])
-SEARCH_LOCATION_LI = SEARCH_CFG.get("location", "Paris, Île-de-France, France")
-SEARCH_LOCATION_HW = SEARCH_CFG.get("location_short", "Paris")
-LOCATION_BOOST = SEARCH_CFG.get("location_boost", ["bures-sur-yvette", "orsay", "saclay", "paris"])
-LEVEL_BOOST = SEARCH_CFG.get("level_boost", ["but 2", "but 3", "bac+2", "bac+3", "3 mois"])
+]
+DEFAULT_LEVEL_BOOST = ["but 2", "but 3", "bac+2", "bac+3", "3 mois"]
+
+
+def _search_cfg() -> Dict[str, Any]:
+    return load_profile(PROFILE_PATH).get("search") or {}
+
+
+def _search_location_li() -> str:
+    return _search_cfg().get("location", "Paris, Île-de-France, France")
+
+
+def _search_location_hw() -> str:
+    return _search_cfg().get("location_short", "Paris")
+
+
+def _level_boost() -> List[str]:
+    return [str(x).lower() for x in (_search_cfg().get("level_boost") or DEFAULT_LEVEL_BOOST)]
+
 
 EXCLUDE_TITLE_TERMS = [
     "cdi",
@@ -91,34 +115,6 @@ EXCLUDE_TITLE_TERMS = [
     "manager",
     "directeur",
 ]
-
-
-def normalize_company_role_key(company: str, role: str) -> Tuple[str, str]:
-    """Normalize (company, role) for cross-site deduplication (LinkedIn vs HelloWork vs WTTJ)."""
-    c = re.sub(r"[^\w\s]", " ", (company or "").lower())
-    c = re.sub(r"\s+", " ", c).strip()
-    r = (role or "").lower()
-    r = re.sub(r"\b(h\s*/\s*f|f\s*/\s*h|h\s*/\s*f\s*/\s*x|x\s*/\s*f\s*/\s*m|m\s*/\s*f)\b", " ", r)
-    r = re.sub(r"[^\w\s]", " ", r)
-    r = re.sub(r"\s+", " ", r).strip()
-    return c, r
-
-
-def load_existing_offers() -> Tuple[Set[str], Set[Tuple[str, str]]]:
-    if not APPS_CSV_PATH.exists():
-        return set(), set()
-    urls: Set[str] = set()
-    keys: Set[Tuple[str, str]] = set()
-    with APPS_CSV_PATH.open("r", newline="", encoding="utf-8") as f:
-        for r in csv.DictReader(f):
-            u = (r.get("URL") or "").strip().rstrip("/").lower()
-            if u:
-                urls.add(u)
-            comp = (r.get("Company") or "").strip()
-            role = (r.get("Role") or "").strip()
-            if comp and role:
-                keys.add(normalize_company_role_key(comp, role))
-    return urls, keys
 
 
 FINAL_YEAR_TERMS = (
@@ -160,40 +156,6 @@ def is_excluded_final_year_offer(title: str, description: str = "") -> bool:
     return False
 
 
-DEFAULT_PREFERENCES: Dict[str, List[str]] = {
-    "target_roles": [
-        "développeur", "developpeur", "software", "fullstack", "full-stack",
-        "backend", "frontend", "web", "cybersécurité", "cybersecurite",
-        "réseaux", "reseaux", "systèmes", "systemes", "devops", "data",
-        "ia", "cloud", "linux", "informatique",
-    ],
-    "avoid_roles": [
-        "paie", "ressources humaines", "comptab", "commercial", "vente",
-        "juridique", "agronomie", "formulation", "achats", "marketing", "finance", "audit",
-    ],
-    "preferred_locations": [
-        "bures", "orsay", "saclay", "palaiseau", "massy", "gif",
-        "les ulis", "91", "essonne", "velizy", "vélizy", "versailles", "antony",
-    ],
-    "idf_locations": [
-        "paris", "île-de-france", "ile-de-france", "nanterre", "courbevoie",
-        "la défense", "la defense", "boulogne", "issy", "montrouge", "clichy",
-        "levallois", "neuilly", "92", "93", "94", "78", "75",
-    ],
-    "work_types": ["télétravail", "teletravail", "remote", "hybride", "hybrid"],
-    "avoid_locations": [
-        "lyon", "toulouse", "marseille", "bordeaux", "nantes", "lille",
-        "roubaix", "annecy", "saint-etienne", "saint-étienne", "canada",
-        "strasbourg", "rennes", "nice", "montpellier", "grenoble", "la hague", "penly", "cholet",
-    ],
-}
-
-
-def load_preferences() -> Dict[str, List[str]]:
-    raw = PROFILE.get("preferences") or {}
-    return {k: [str(x).lower() for x in (raw.get(k) or v)] for k, v in DEFAULT_PREFERENCES.items()}
-
-
 def classify_offer_quality(
     role: str,
     location: str = "",
@@ -203,7 +165,7 @@ def classify_offer_quality(
     prefs: Optional[Dict[str, List[str]]] = None,
 ) -> Tuple[str, int]:
     """Classify an offer into ('high' | 'medium' | 'low', score) using role, distance, work type, and level."""
-    p = prefs if prefs is not None else load_preferences()
+    p = prefs if prefs is not None else load_preferences(PROFILE_PATH)
     r_low = (role or "").lower()
     l_low = (location or "").lower()
     d_low = (description or "").lower()
@@ -220,7 +182,7 @@ def classify_offer_quality(
     elif any(good in r_low or good in kw_low for good in p.get("target_roles", [])):
         score += 30
 
-    kw_count = len([k for k in kw_low.split(",") if k.strip()])
+    kw_count = len([k for k in re.split(r"[;,]", kw_low) if k.strip()])
     score += min(15, kw_count * 3)
 
     is_remote = any(w in f"{r_low} {l_low} {d_low}" for w in p.get("work_types", []))
@@ -234,7 +196,7 @@ def classify_offer_quality(
     elif any(loc in f"{l_low} {u_low}" for loc in p.get("avoid_locations", [])) and not is_remote:
         score -= 30
 
-    if any(lvl in f"{r_low} {d_low}" for lvl in LEVEL_BOOST):
+    if any(lvl in f"{r_low} {d_low}" for lvl in _level_boost()):
         score += 10
     elif any(lvl in f"{r_low} {d_low}" for lvl in ("bac+5", "bac +5", "master 2", "m2", "pfe")) and not any(
         ok in f"{r_low} {d_low}" for ok in ("bac+2", "bac +2", "bac+3", "bac +3", "but 2", "but 3")
@@ -271,7 +233,7 @@ def scrape_linkedin_paginated(query: str, max_per_query: int, easy_apply: bool =
         url = (
             f"https://fr.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
             f"?keywords={quote_plus(query)}"
-            f"&location={quote_plus(SEARCH_LOCATION_LI)}"
+            f"&location={quote_plus(_search_location_li())}"
             f"&f_JT=I{'&f_AL=true' if easy_apply else ''}&start={start}"
         )
         try:
@@ -320,7 +282,7 @@ def scrape_hellowork_paginated(query: str, max_per_query: int) -> List[Dict[str,
     while len(offers) < max_per_query and page_num <= 12:
         url = (
             f"https://www.hellowork.com/fr-fr/emploi/recherche.html"
-            f"?k={quote_plus(query)}&l={quote_plus(SEARCH_LOCATION_HW)}&c=Stage&p={page_num}"
+            f"?k={quote_plus(query)}&l={quote_plus(_search_location_hw())}&c=Stage&p={page_num}"
         )
         try:
             resp = get_http_session().get(url, timeout=15)
@@ -383,62 +345,13 @@ class AsyncBrowserPool:
             try:
                 from playwright.async_api import async_playwright
 
-                CHROME_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-                lock_file = CHROME_PROFILE_DIR / "SingletonLock"
-                if lock_file.exists() or lock_file.is_symlink():
-                    pid = None
-                    try:
-                        target = os.readlink(lock_file)
-                        m = re.search(r"-(\d+)$", target)
-                        if m:
-                            pid = int(m.group(1))
-                    except Exception:
-                        pass
-                    if pid is not None:
-                        try:
-                            os.kill(pid, 0)
-                            self._failed = True
-                            print(f"  [!] .chrome_profile/ is currently in use by PID {pid}. Close that window/task first.")
-                            return False
-                        except ProcessLookupError:
-                            pass
-                        except PermissionError:
-                            self._failed = True
-                            print(f"  [!] .chrome_profile/ is currently in use by PID {pid}. Close that window/task first.")
-                            return False
-                    for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
-                        p = CHROME_PROFILE_DIR / name
-                        if p.exists() or p.is_symlink():
-                            try:
-                                p.unlink()
-                            except Exception:
-                                pass
+                if not prepare_chrome_profile_dir(CHROME_PROFILE_DIR):
+                    self._failed = True
+                    return False
                 self._pw = await async_playwright().start()
-                pool_kwargs: Dict[str, Any] = {
-                    "user_data_dir": str(CHROME_PROFILE_DIR),
-                    "headless": True,
-                    "viewport": {"width": 1280, "height": 860},
-                    "locale": "fr-FR",
-                    "ignore_default_args": ["--enable-automation"],
-                    "args": ["--disable-blink-features=AutomationControlled"],
-                }
-                if Path("/Applications/Google Chrome.app").exists():
-                    pool_kwargs["channel"] = "chrome"
-                else:
-                    pool_kwargs["channel"] = "chromium"
-                    pool_kwargs["user_agent"] = (
-                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                    )
+                pool_kwargs = build_chrome_launch_kwargs(CHROME_PROFILE_DIR, headless=True)
                 self._context = await self._pw.chromium.launch_persistent_context(**pool_kwargs)
-                storage_state_path = CHROME_PROFILE_DIR / "storage_state.json"
-                if storage_state_path.exists():
-                    try:
-                        saved = json.loads(storage_state_path.read_text(encoding="utf-8"))
-                        if saved.get("cookies"):
-                            await self._context.add_cookies(saved["cookies"])
-                    except Exception:
-                        pass
+                await restore_storage_cookies(self._context, CHROME_PROFILE_DIR)
                 q: asyncio.Queue = asyncio.Queue()
                 existing_pages = list(self._context.pages)
                 for p in existing_pages[: self.max_tabs]:
@@ -496,7 +409,8 @@ class AsyncBrowserPool:
             else:
                 await page.wait_for_timeout(min(wait_ms, 800))
             await page.wait_for_timeout(150)
-            domain = urlparse(page.url or url).netloc
+            from urllib.parse import urlparse as _urlparse
+            domain = _urlparse(page.url or url).netloc
             await self._dismiss_cookies(page, domain)
             return page.url, await page.content()
         except Exception as e:
@@ -655,7 +569,7 @@ async def scrape_indeed_paginated(browser: AsyncBrowserPool, query: str, max_per
     while len(offers) < max_per_query and start <= 80:
         url = (
             f"https://fr.indeed.com/jobs"
-            f"?q={quote_plus(query)}&l={quote_plus(SEARCH_LOCATION_HW)}&jt=internship&start={start}"
+            f"?q={quote_plus(query)}&l={quote_plus(_search_location_hw())}&jt=internship&start={start}"
         )
         final_url, html = await browser.fetch_html(url, wait_selector="a[data-jk], a[href*='/viewjob']", wait_ms=1800)
         if not html:
@@ -749,7 +663,7 @@ async def scrape_meteojob_paginated(browser: AsyncBrowserPool, query: str, max_p
     while len(offers) < max_per_query and page_num <= 8:
         url = (
             f"https://www.meteojob.com/jobs"
-            f"?what={quote_plus(query)}&where={quote_plus(SEARCH_LOCATION_HW)}"
+            f"?what={quote_plus(query)}&where={quote_plus(_search_location_hw())}"
             f"&contractType=INTERNSHIP&page={page_num}"
         )
         final_url, html = await browser.fetch_html(url, wait_selector="a[href*='/jobs/'], a[href*='/candidat/offres/']", wait_ms=1800)
@@ -962,6 +876,7 @@ def run_tailor_for_offer(offer: Dict[str, str]) -> Path | None:
         offer["url"],
         "--text",
         offer["text"],
+        "--json",
     ]
     if offer.get("company"):
         cmd.extend(["--company", offer["company"]])
@@ -972,6 +887,22 @@ def run_tailor_for_offer(offer: Dict[str, str]) -> Path | None:
     if res.returncode != 0:
         print(f"  [!] tailor.py failed for {offer['url']}:\n{res.stderr or res.stdout}")
         return None
+
+    for line in reversed(res.stdout.splitlines()):
+        s = line.strip()
+        if s.startswith("{") and s.endswith("}"):
+            try:
+                meta = json.loads(s)
+                if meta.get("metadata_path"):
+                    mp = Path(meta["metadata_path"])
+                    if mp.exists():
+                        return mp
+                if meta.get("cv_pdf"):
+                    mp = Path(meta["cv_pdf"]).parent / "metadata.json"
+                    if mp.exists():
+                        return mp
+            except json.JSONDecodeError:
+                pass
 
     for line in res.stdout.splitlines():
         if line.startswith("CV PDF"):
@@ -989,7 +920,7 @@ def main() -> int:
     parser.add_argument(
         "--queries",
         nargs="+",
-        default=DEFAULT_QUERIES,
+        default=None,
         help="Search queries",
     )
     parser.add_argument(
@@ -1040,6 +971,8 @@ def main() -> int:
         help="Filter offers by desirability tier (high, medium, low)",
     )
     args = parser.parse_args()
+    if not args.queries:
+        args.queries = _search_cfg().get("queries") or DEFAULT_QUERIES
     retry_sources = set(args.sources) if args.sources else None
     quality_filter = set(args.quality) if args.quality else None
     if args.sources is None:
@@ -1064,23 +997,23 @@ def main() -> int:
     queue_metas: List[Path] = []
     if args.retry:
         target_statuses = {"drafted", "manual_portal"} if args.retry == "pending" else {args.retry}
-        if APPS_CSV_PATH.exists():
-            with APPS_CSV_PATH.open("r", newline="", encoding="utf-8") as f:
-                for r in csv.DictReader(f):
-                    tier, _ = classify_offer_quality(
-                        r.get("Role", ""),
-                        matched_keywords=r.get("Matched_Keywords", ""),
-                        url=r.get("URL", ""),
-                    )
-                    if (
-                        (r.get("Status") or "").strip().lower() in target_statuses
-                        and r.get("CV_PDF")
-                        and _url_in_sources(r.get("URL", ""), retry_sources)
-                        and (not quality_filter or tier in quality_filter)
-                    ):
-                        mp = WORKSPACE / Path(r["CV_PDF"]).parent / "metadata.json"
-                        if mp.exists() and mp not in queue_metas:
-                            queue_metas.append(mp)
+        prefs = load_preferences(PROFILE_PATH)
+        for r in read_applications(APPS_CSV_PATH):
+            tier, _ = classify_offer_quality(
+                r.get("Role", ""),
+                matched_keywords=r.get("Matched_Keywords", ""),
+                url=r.get("URL", ""),
+                prefs=prefs,
+            )
+            if (
+                (r.get("Status") or "").strip().lower() in target_statuses
+                and r.get("CV_PDF")
+                and _url_in_sources(r.get("URL", ""), retry_sources)
+                and (not quality_filter or tier in quality_filter)
+            ):
+                mp = WORKSPACE / Path(r["CV_PDF"]).parent / "metadata.json"
+                if mp.exists() and mp not in queue_metas:
+                    queue_metas.append(mp)
         queue_metas = queue_metas[: args.limit]
         src_note = f" (sources: {', '.join(sorted(retry_sources))})" if retry_sources else ""
         q_note = f" (quality: {', '.join(sorted(quality_filter))})" if quality_filter else ""
@@ -1260,12 +1193,11 @@ def main() -> int:
 
         if not queue_metas and not args.scrape_only and APPS_CSV_PATH.exists():
             # Fall back to existing 'drafted' offers so launching manual queue always opens pending offers
-            with APPS_CSV_PATH.open("r", newline="", encoding="utf-8") as f:
-                for r in csv.DictReader(f):
-                    if (r.get("Status") or "").strip().lower() == "drafted" and r.get("CV_PDF"):
-                        mp = WORKSPACE / Path(r["CV_PDF"]).parent / "metadata.json"
-                        if mp.exists() and mp not in queue_metas:
-                            queue_metas.append(mp)
+            for r in read_applications(APPS_CSV_PATH):
+                if (r.get("Status") or "").strip().lower() == "drafted" and r.get("CV_PDF"):
+                    mp = WORKSPACE / Path(r["CV_PDF"]).parent / "metadata.json"
+                    if mp.exists() and mp not in queue_metas:
+                        queue_metas.append(mp)
             if queue_metas:
                 print(f"[*] No brand-new offers found; queuing {len(queue_metas)} pending 'drafted' offer(s).")
 

@@ -16,3 +16,6 @@ In `scripts/apply_browser.py`:
 
 ## Adding Academic Background
 Place `curriculum_but2_b.md` inside `config/` and run `./stage sync` to merge your official BUT 2 curriculum into `config/master_profile.md`.
+
+## Verifying Changes (`./stage check`)
+Before committing any change, run `./stage check` to verify Python compilation, catch undefined names across `scripts/` and `tests/`, run `ruff` (if installed), and pass the offline unit tests in `tests/`.

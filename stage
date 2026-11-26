@@ -63,26 +63,20 @@ case "$cmd" in
   status)
     # Pretty-print applications tracker
     "$PY" -c "
-import csv
-from pathlib import Path
-p = Path('$ROOT_DIR/data/applications.csv')
-rows = list(csv.DictReader(p.open(encoding='utf-8')))
+import sys
+sys.path.insert(0, '$ROOT_DIR/scripts')
+from core.storage import detect_source, read_applications
+rows = read_applications()
 print(f'Total tracked offers: {len(rows)}')
 for i, r in enumerate(rows, 1):
-    u = (r.get('URL') or '').lower()
-    src = (
-        'LinkedIn' if 'linkedin.com' in u else
-        'HelloWork' if 'hellowork.com' in u else
-        'WTTJ' if 'welcometothejungle.com' in u else
-        'JobTeaser' if 'jobteaser.com' in u else
-        'Indeed' if 'indeed.com' in u else
-        'APEC' if 'apec.fr' in u else
-        'Meteojob' if 'meteojob.com' in u else
-        'Other'
-    )
+    src = detect_source(r.get('URL') or '')
     print(f\"{i:2d}. [{r['Status']:13s}] [{src:9s}] {r['Company']} — {r['Role']}\")
     print(f\"    {r['URL']}\")
 "
+    ;;
+  check)
+    # Run static syntax/undefined-name checks, ruff (if installed), and unit tests
+    exec "$PY" "$ROOT_DIR/scripts/check_code.py" "$@"
     ;;
   *)
     cat <<'EOF'
@@ -98,6 +92,7 @@ Stage Application Pipeline — Simple Commands
   ./stage tailor --url <URL>       Tailor CV & LM for one specific job URL
   ./stage sync                     Re-index GitHub repos into config/master_profile.md
   ./stage status                   Show all tracked offers & statuses
+  ./stage check                    Run static checks & offline unit tests
 
 Tip: Add a global alias in ~/.zshrc:
   alias stage="/Users/devilijho/Documents/cv-proyect/stage"

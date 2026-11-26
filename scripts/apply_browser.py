@@ -16,52 +16,48 @@ Features:
 
 import argparse
 import asyncio
-import csv
-import fcntl
 import json
 import os
 import re
+import subprocess
 import sys
-import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(line_buffering=True)
 
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
 from playwright.async_api import BrowserContext, Page, TimeoutError as PlaywrightTimeout, async_playwright
 
-WORKSPACE = Path(__file__).resolve().parent.parent
-PROFILE_PATH = WORKSPACE / "config" / "profile.json"
-MASTER_PROFILE_PATH = WORKSPACE / "config" / "master_profile.md"
-APPS_CSV_PATH = WORKSPACE / "data" / "applications.csv"
-UNANSWERED_QUESTIONS_PATH = WORKSPACE / "data" / "unanswered_questions.json"
-LLM_CACHE_PATH = WORKSPACE / "data" / "llm_answer_cache.json"
-CHROME_PROFILE_DIR = WORKSPACE / ".chrome_profile"
-DEBUG_DIR = WORKSPACE / "debug"
-MANUAL_CURRENT_PATH = WORKSPACE / "data" / "manual_current.json"
-MANUAL_SKIP_PATH = WORKSPACE / "data" / ".manual_skip"
+from core.browser_session import (
+    build_chrome_launch_kwargs,
+    prepare_chrome_profile_dir,
+    restore_storage_cookies,
+    save_storage_cookies,
+)
+from core.config import (
+    APPS_CSV_PATH,
+    CHROME_PROFILE_DIR,
+    DEBUG_DIR,
+    LLM_CACHE_PATH,
+    MANUAL_CURRENT_PATH,
+    MANUAL_SKIP_PATH,
+    MASTER_PROFILE_PATH,
+    PROFILE_PATH,
+    UNANSWERED_QUESTIONS_PATH,
+    WORKSPACE,
+    load_custom_rules,
+    load_project_env,
+    match_custom_rule,
+)
+from core.llm import ask_llm_for_field, load_llm_cache, save_llm_cache
+from core.storage import update_application_status
 
-
-def _load_project_env(env_path: Path = WORKSPACE / ".env") -> None:
-    """Load key=value pairs from project-local .env without touching global PC env."""
-    if not env_path.exists():
-        return
-    try:
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            s = line.strip()
-            if not s or s.startswith("#") or "=" not in s:
-                continue
-            k, v = s.split("=", 1)
-            k = k.strip()
-            v = v.strip().strip('"').strip("'")
-            if k and v:
-                os.environ.setdefault(k, v)
-    except Exception:
-        pass
-
-
-_load_project_env()
+load_project_env()
 
 SITE_CONFIRMATION_PHRASES: Dict[str, Tuple[str, ...]] = {
     "LinkedIn": (
@@ -155,33 +151,6 @@ def load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def load_custom_rules(path: Path = PROFILE_PATH) -> List[Dict[str, str]]:
-    """Load user-defined keyword->answer rules from config/profile.json."""
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        rules = data.get("custom_rules", [])
-        if not isinstance(rules, list):
-            return []
-        return [
-            {"keyword": str(r.get("keyword", "")).strip().lower(), "answer": str(r.get("answer", "")).strip()}
-            for r in rules
-            if str(r.get("keyword", "")).strip() and str(r.get("answer", "")).strip()
-        ]
-    except Exception:
-        return []
-
-
-def match_custom_rule(question: str, custom_rules: List[Dict[str, str]]) -> str:
-    """Return the answer for the first custom rule whose keyword matches question."""
-    q_low = (question or "").lower()
-    for rule in custom_rules:
-        if rule["keyword"] in q_low:
-            return rule["answer"]
-    return ""
-
-
 def load_saved_unanswered_answers(path: Path = UNANSWERED_QUESTIONS_PATH) -> Dict[str, str]:
     """Load user-filled answers from data/unanswered_questions.json keyed by normalized question."""
     if not path.exists():
@@ -197,160 +166,6 @@ def load_saved_unanswered_answers(path: Path = UNANSWERED_QUESTIONS_PATH) -> Dic
         }
     except Exception:
         return {}
-
-
-def load_llm_cache() -> Dict[str, str]:
-    if not LLM_CACHE_PATH.exists():
-        return {}
-    try:
-        data = json.loads(LLM_CACHE_PATH.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def save_llm_cache(cache: Dict[str, str]) -> None:
-    try:
-        LLM_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        LLM_CACHE_PATH.write_text(json.dumps(cache, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    except Exception:
-        pass
-
-
-def ask_llm_for_field(
-    field_type: str,
-    question: str,
-    options: List[str],
-    answers: Dict[str, str],
-    verified_skills: Set[str],
-) -> str:
-    """Lightweight cached LLM fallback for required unknown form questions.
-
-    Auto-selects first available backend:
-      1. Local Ollama (http://127.0.0.1:11434, 100% free / 0 tokens)
-      2. Gemini API free tier (GEMINI_API_KEY -> gemini-2.5-flash-lite)
-      3. Groq API free tier (GROQ_API_KEY -> llama-3.1-8b-instant)
-      4. OpenAI API (OPENAI_API_KEY -> gpt-4o-mini)
-    """
-    q_clean = re.sub(r"\s+", " ", (question or "")).strip()
-    if not q_clean:
-        return ""
-    cache_key = f"{field_type}|{q_clean.lower()}|{'||'.join(options[:20])}"
-    cache = load_llm_cache()
-    if cache_key in cache:
-        return cache[cache_key]
-
-    facts = (
-        f"Candidate: {answers.get('nom_complet', 'Santiago FUENTES LLANOS')}, "
-        f"Education: {answers.get('formation', 'BUT 2 Informatique')} ({answers.get('ecole', 'IUT d\'Orsay')}) & École 42 Paris, "
-        f"Level: {answers.get('niveau', 'Bac+2 / BUT 2')}, "
-        f"City: {answers.get('ville', 'Bures-sur-Yvette')} (91440, Essonne, Île-de-France), "
-        f"Internship: {answers.get('disponibilite', '03/05 to 16/07, 3 months, extendable summer')}, "
-        f"Work auth France: {answers.get('autorisation_travail', 'Oui')}, Visa sponsorship needed: Non, "
-        f"Languages: Spanish (native), French (C1), English (C1), "
-        f"Verified skills: {', '.join(sorted(verified_skills)[:25])}."
-    )
-    opt_line = f"\nAllowed options (pick ONE verbatim): {options[:25]}" if options else ""
-    prompt = (
-        f"You fill job application forms strictly grounded in these candidate facts:\n{facts}\n\n"
-        f"Field type: {field_type}\nQuestion: {q_clean}{opt_line}\n"
-        f"Rules: Reply with ONLY the concise answer value (no quotes, no explanation). "
-        f"If options are listed, return ONE exact option string verbatim. Never invent skills. "
-        f"If unsure, reply EMPTY."
-    )
-
-    provider = ""
-    raw_ans = ""
-
-    # 1. Local Ollama (free, unlimited)
-    try:
-        ollama_model = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b")
-        req = urllib.request.Request(
-            "http://127.0.0.1:11434/api/generate",
-            data=json.dumps({"model": ollama_model, "prompt": prompt, "stream": False}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=8) as r:
-            body = json.loads(r.read().decode("utf-8"))
-            raw_ans = (body.get("response") or "").strip()
-            provider = f"ollama:{ollama_model}"
-    except Exception:
-        pass
-
-    # 2. Gemini API free tier
-    if not raw_ans and os.environ.get("GEMINI_API_KEY"):
-        g_key = os.environ["GEMINI_API_KEY"].strip()
-        g_models = [os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite").strip(), "gemini-3.5-flash"]
-        for g_model in dict.fromkeys(m for m in g_models if m):
-            try:
-                req = urllib.request.Request(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/{g_model}:generateContent?key={g_key}",
-                    data=json.dumps({
-                        "contents": [{"parts": [{"text": prompt}]}],
-                        "generationConfig": {"maxOutputTokens": 40, "temperature": 0.0},
-                    }).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                with urllib.request.urlopen(req, timeout=10) as r:
-                    body = json.loads(r.read().decode("utf-8"))
-                    raw_ans = (
-                        body.get("candidates", [{}])[0]
-                        .get("content", {})
-                        .get("parts", [{}])[0]
-                        .get("text", "")
-                        .strip()
-                    )
-                    provider = f"gemini:{g_model}"
-                    break
-            except Exception as e:
-                err_txt = str(e)
-                if "404" in err_txt:
-                    continue
-                print(f"  [!] Gemini API error ({g_model}): {err_txt[:120]}")
-                break
-
-    # 3. Groq / OpenAI compatible
-    if not raw_ans and (os.environ.get("GROQ_API_KEY") or os.environ.get("OPENAI_API_KEY")):
-        try:
-            use_groq = bool(os.environ.get("GROQ_API_KEY"))
-            api_key = (os.environ.get("GROQ_API_KEY") if use_groq else os.environ.get("OPENAI_API_KEY") or "").strip()
-            endpoint = "https://api.groq.com/openai/v1/chat/completions" if use_groq else "https://api.openai.com/openai/v1/chat/completions"
-            model = "llama-3.1-8b-instant" if use_groq else "gpt-4o-mini"
-            req = urllib.request.Request(
-                endpoint,
-                data=json.dumps({
-                    "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 40,
-                    "temperature": 0.0,
-                }).encode("utf-8"),
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=10) as r:
-                body = json.loads(r.read().decode("utf-8"))
-                raw_ans = body.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                provider = f"{'groq' if use_groq else 'openai'}:{model}"
-        except Exception:
-            pass
-
-    ans = raw_ans.splitlines()[0].strip(" \"'`") if raw_ans else ""
-    if not ans or ans.upper() == "EMPTY":
-        return ""
-    if options:
-        exact = next((o for o in options if o.lower() == ans.lower()), None)
-        if not exact:
-            exact = next((o for o in options if ans.lower() in o.lower() or o.lower() in ans.lower()), None)
-        if not exact:
-            return ""
-        ans = exact
-
-    cache[cache_key] = ans
-    save_llm_cache(cache)
-    print(f"  [LLM:{provider}] {q_clean} -> {ans}")
-    return ans
 
 
 def log_unanswered_question(
@@ -456,39 +271,7 @@ def classify_yes_no_question(question: str, verified_skills: Set[str]) -> Option
 
 
 def update_tracker_status(url: str, company: str, new_status: str, force: bool = False) -> None:
-    if not APPS_CSV_PATH.exists():
-        return
-    APPS_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = APPS_CSV_PATH.parent / ".applications.csv.lock"
-    with lock_path.open("w", encoding="utf-8") as lock_f:
-        fcntl.flock(lock_f, fcntl.LOCK_EX)
-        try:
-            with APPS_CSV_PATH.open("r", newline="", encoding="utf-8") as f:
-                rows = list(csv.DictReader(f))
-            if not rows:
-                return
-            headers = list(rows[0].keys())
-            norm_url = (url or "").strip().rstrip("/").lower()
-            updated = False
-            for r in rows:
-                row_url = (r.get("URL") or "").strip().rstrip("/").lower()
-                if norm_url:
-                    matched = row_url == norm_url
-                else:
-                    matched = (r.get("Company") or "").strip().lower() == (company or "").strip().lower()
-                if not matched:
-                    continue
-                if not force and (r.get("Status") or "").strip().lower() == "applied" and new_status != "applied":
-                    continue
-                r["Status"] = new_status
-                updated = True
-            if updated:
-                with APPS_CSV_PATH.open("w", newline="", encoding="utf-8") as f:
-                    writer = csv.DictWriter(f, fieldnames=headers)
-                    writer.writeheader()
-                    writer.writerows(rows)
-        finally:
-            fcntl.flock(lock_f, fcntl.LOCK_UN)
+    update_application_status(url, new_status, company=company, force=force)
 
 
 def detect_ats_provider(url: str) -> str:
@@ -2326,39 +2109,6 @@ async def process_offer_concurrently(
     return active_page, final_status
 
 
-def prepare_chrome_profile_dir(profile_dir: Path) -> bool:
-    """Clean stale Chromium Singleton locks; return False if an active process owns it."""
-    profile_dir.mkdir(parents=True, exist_ok=True)
-    lock_file = profile_dir / "SingletonLock"
-    if lock_file.exists() or lock_file.is_symlink():
-        pid = None
-        try:
-            target = os.readlink(lock_file)
-            m = re.search(r"-(\d+)$", target)
-            if m:
-                pid = int(m.group(1))
-        except Exception:
-            pass
-        if pid is not None:
-            try:
-                os.kill(pid, 0)
-                print(f"[!] .chrome_profile/ is currently in use by PID {pid}. Close that Chrome window or stop the running task first.")
-                return False
-            except ProcessLookupError:
-                pass
-            except PermissionError:
-                print(f"[!] .chrome_profile/ is currently in use by PID {pid}. Close that Chrome window or stop the running task first.")
-                return False
-        for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
-            p = profile_dir / name
-            if p.exists() or p.is_symlink():
-                try:
-                    p.unlink()
-                except Exception:
-                    pass
-    return True
-
-
 async def async_main() -> int:
     parser = argparse.ArgumentParser(description="Playwright Async Multi-Tab Application Assistant")
     parser.add_argument("--meta", help="Path to output/<Company>/metadata.json")
@@ -2382,26 +2132,10 @@ async def async_main() -> int:
         return 1
 
     if args.login:
-        storage_state_path = CHROME_PROFILE_DIR / "storage_state.json"
         async with async_playwright() as p:
-            login_kwargs: Dict[str, Any] = {
-                "user_data_dir": str(CHROME_PROFILE_DIR),
-                "headless": False,
-                "no_viewport": True,
-                "locale": "fr-FR",
-                "ignore_default_args": ["--enable-automation"],
-                "args": ["--disable-blink-features=AutomationControlled"],
-            }
-            if Path("/Applications/Google Chrome.app").exists():
-                login_kwargs["channel"] = "chrome"
+            login_kwargs = build_chrome_launch_kwargs(CHROME_PROFILE_DIR, headless=False, no_viewport=True)
             context = await p.chromium.launch_persistent_context(**login_kwargs)
-            if storage_state_path.exists():
-                try:
-                    saved = json.loads(storage_state_path.read_text(encoding="utf-8"))
-                    if saved.get("cookies"):
-                        await context.add_cookies(saved["cookies"])
-                except Exception:
-                    pass
+            await restore_storage_cookies(context, CHROME_PROFILE_DIR)
             labels: List[str] = []
             for idx, src_key in enumerate(args.sources):
                 label, login_url = LOGIN_URLS[src_key]
@@ -2413,15 +2147,6 @@ async def async_main() -> int:
                     print(f"  [!] Could not open {label} ({login_url}): {e}")
             print(f"[*] Opened login tabs for: {', '.join(labels)}.")
             print("[*] Sign in on each tab so cookies are saved in .chrome_profile/, then close the Chrome window when done.")
-            async def _save_cookies_snapshot() -> None:
-                try:
-                    cookies = await context.cookies()
-                    storage_state_path.write_text(
-                        json.dumps({"cookies": cookies}, ensure_ascii=False, indent=2),
-                        encoding="utf-8",
-                    )
-                except Exception:
-                    pass
 
             ticks = 0
             try:
@@ -2429,10 +2154,10 @@ async def async_main() -> int:
                     await asyncio.sleep(0.5)
                     ticks += 1
                     if ticks % 4 == 0:
-                        await _save_cookies_snapshot()
+                        await save_storage_cookies(context, CHROME_PROFILE_DIR)
             except Exception:
                 pass
-            await _save_cookies_snapshot()
+            await save_storage_cookies(context, CHROME_PROFILE_DIR)
             await context.close()
         return 0
 
@@ -2450,33 +2175,11 @@ async def async_main() -> int:
             pass
 
     run_headless = bool(args.auto and not args.headed)
-    launch_kwargs: Dict[str, Any] = {
-        "user_data_dir": str(CHROME_PROFILE_DIR),
-        "headless": run_headless,
-        "viewport": {"width": 1280, "height": 860},
-        "locale": "fr-FR",
-        "ignore_default_args": ["--enable-automation"],
-        "args": ["--disable-blink-features=AutomationControlled"],
-    }
-    if Path("/Applications/Google Chrome.app").exists():
-        launch_kwargs["channel"] = "chrome"
-    elif run_headless:
-        launch_kwargs["channel"] = "chromium"
-        launch_kwargs["user_agent"] = (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/159.0.0.0 Safari/537.36"
-        )
+    launch_kwargs = build_chrome_launch_kwargs(CHROME_PROFILE_DIR, headless=run_headless)
 
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(**launch_kwargs)
-        storage_state_path = CHROME_PROFILE_DIR / "storage_state.json"
-        if storage_state_path.exists():
-            try:
-                saved = json.loads(storage_state_path.read_text(encoding="utf-8"))
-                if saved.get("cookies"):
-                    await context.add_cookies(saved["cookies"])
-            except Exception:
-                pass
+        await restore_storage_cookies(context, CHROME_PROFILE_DIR)
 
         max_workers = max(1, args.tabs)
         if args.auto and len(meta_paths) > 1:

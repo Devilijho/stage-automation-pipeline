@@ -1,0 +1,25 @@
+[project]
+name = "stagebot"
+version = "0.2.0"
+description = "Local, grounded internship application pipeline for StageBot"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "beautifulsoup4",
+    "playwright",
+    "pypdf",
+    "requests",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

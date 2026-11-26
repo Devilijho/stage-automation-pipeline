@@ -10,8 +10,6 @@ to `applications.csv` while preventing duplicates.
 """
 
 import argparse
-import csv
-import fcntl
 import json
 import re
 import shutil
@@ -26,25 +24,23 @@ import requests
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
-WORKSPACE = Path(__file__).resolve().parent.parent
-PROFILE_PATH = WORKSPACE / "config" / "profile.json"
-MASTER_PROFILE_PATH = WORKSPACE / "config" / "master_profile.md"
-BASE_CV_PATH = WORKSPACE / "templates" / "base_cv.tex"
-BASE_LM_PATH = WORKSPACE / "templates" / "base_lm.tex"
-APPS_CSV_PATH = WORKSPACE / "data" / "applications.csv"
-OUTPUT_DIR = WORKSPACE / "output"
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
 
-CSV_HEADERS = [
-    "Date",
-    "Company",
-    "Role",
-    "URL",
-    "Status",
-    "CV_Title_Used",
-    "Matched_Keywords",
-    "CV_PDF",
-    "LM_PDF",
-]
+from core.config import (
+    APPS_CSV_PATH,
+    MASTER_PROFILE_PATH,
+    OUTPUT_DIR,
+    PROFILE_PATH,
+    TEMPLATES_DIR,
+    WORKSPACE,
+    load_profile,
+)
+from core.storage import CSV_HEADERS, check_and_log_application
+
+BASE_CV_PATH = TEMPLATES_DIR / "base_cv.tex"
+BASE_LM_PATH = TEMPLATES_DIR / "base_lm.tex"
 
 KNOWN_KEYWORDS: Dict[str, List[str]] = {
     "C": [" c ", "langage c", "c/c++"],
@@ -158,10 +154,6 @@ def latex_escape(text: str) -> str:
 def sanitize_slug(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9]+", "_", name.strip())
     return cleaned.strip("_") or "Target"
-
-
-def load_profile() -> Dict[str, Any]:
-    return json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
 
 
 def fetch_job_from_url(url: str) -> Tuple[str, str]:
@@ -643,102 +635,6 @@ def build_lm_tex(
     return lm
 
 
-def check_and_log_application(
-    company: str,
-    role: str,
-    url: str,
-    cv_title: str,
-    matched_keywords: List[str],
-    cv_pdf: Path,
-    lm_pdf: Path,
-    force: bool = False,
-) -> bool:
-    APPS_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = APPS_CSV_PATH.parent / ".applications.csv.lock"
-    with lock_path.open("w", encoding="utf-8") as lock_f:
-        fcntl.flock(lock_f, fcntl.LOCK_EX)
-        try:
-            return _check_and_log_application_unlocked(
-                company, role, url, cv_title, matched_keywords, cv_pdf, lm_pdf, force=force
-            )
-        finally:
-            fcntl.flock(lock_f, fcntl.LOCK_UN)
-
-
-def _check_and_log_application_unlocked(
-    company: str,
-    role: str,
-    url: str,
-    cv_title: str,
-    matched_keywords: List[str],
-    cv_pdf: Path,
-    lm_pdf: Path,
-    force: bool = False,
-) -> bool:
-    if not APPS_CSV_PATH.exists():
-        with APPS_CSV_PATH.open("w", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerow(CSV_HEADERS)
-
-    with APPS_CSV_PATH.open("r", newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-
-    # Upgrade legacy CSV rows without CV_PDF / LM_PDF columns
-    upgraded = False
-    for r in rows:
-        for col in ("CV_PDF", "LM_PDF"):
-            if col not in r:
-                r[col] = ""
-                upgraded = True
-    if upgraded:
-        with APPS_CSV_PATH.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
-            writer.writeheader()
-            writer.writerows(rows)
-
-    norm_url = url.strip().rstrip("/").lower()
-    def _norm_pair(c: str, ro: str) -> Tuple[str, str]:
-        c_n = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", (c or "").lower())).strip()
-        r_n = re.sub(r"\b(h\s*/\s*f|f\s*/\s*h|h\s*/\s*f\s*/\s*x|x\s*/\s*f\s*/\s*m|m\s*/\s*f)\b", " ", (ro or "").lower())
-        r_n = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", r_n)).strip()
-        return c_n, r_n
-
-    target_pair = _norm_pair(company, role)
-    for r in rows:
-        existing_url = (r.get("URL") or "").strip().rstrip("/").lower()
-        if norm_url and existing_url == norm_url and not force:
-            return False
-        if (
-            target_pair[0]
-            and target_pair[1]
-            and _norm_pair(r.get("Company") or "", r.get("Role") or "") == target_pair
-            and not force
-        ):
-            return False
-
-    try:
-        cv_rel = str(cv_pdf.relative_to(WORKSPACE))
-    except ValueError:
-        cv_rel = str(cv_pdf)
-    try:
-        lm_rel = str(lm_pdf.relative_to(WORKSPACE))
-    except ValueError:
-        lm_rel = str(lm_pdf)
-
-    with APPS_CSV_PATH.open("a", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerow([
-            datetime.now().strftime("%Y-%m-%d %H:%M"),
-            company,
-            role,
-            url or "manual_input",
-            "drafted",
-            cv_title,
-            "; ".join(matched_keywords),
-            cv_rel,
-            lm_rel,
-        ])
-    return True
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="ATS CV & LM Tailoring Engine")
     parser.add_argument("--url", default="", help="Job offer URL")
@@ -747,6 +643,7 @@ def main() -> int:
     parser.add_argument("--company", default="", help="Override company name")
     parser.add_argument("--role", default="", help="Override role title")
     parser.add_argument("--force", action="store_true", help="Allow overwriting duplicate entry")
+    parser.add_argument("--json", action="store_true", help="Output metadata as JSON on stdout")
     args = parser.parse_args()
 
     profile = load_profile()
@@ -756,7 +653,8 @@ def main() -> int:
     if args.file:
         job_text = Path(args.file).read_text(encoding="utf-8")
     elif args.url and not job_text:
-        print(f"[*] Fetching job offer from {args.url} ...")
+        if not args.json:
+            print(f"[*] Fetching job offer from {args.url} ...")
         try:
             page_title, job_text = fetch_job_from_url(args.url)
         except Exception as e:
@@ -826,12 +724,13 @@ def main() -> int:
         cv_pdf_path, log_text = compile_tex(cv_tex_path)
         cv_ok, pages, overfull = verify_pdf_one_page(cv_pdf_path, log_text)
         if pages == 1:
-            if overfull:
+            if overfull and not args.json:
                 print(f"[!] Warning: LaTeX overfull detected ({len(overfull)} lines).")
             break
-        print(f"[*] CV was {pages} pages with bullet_caps={bullet_caps}, tightening...")
+        if not args.json:
+            print(f"[*] CV was {pages} pages with bullet_caps={bullet_caps}, tightening...")
 
-    if not cv_ok and cv_pdf_path:
+    if not cv_ok and cv_pdf_path and not args.json:
         print(f"[!] Check {cv_pdf_path} (pages={pages}).")
 
     lm_tex = build_lm_tex(
@@ -845,6 +744,7 @@ def main() -> int:
         company, role, args.url, cv_title, matched_keywords, cv_pdf_path, lm_pdf_path, force=args.force
     )
 
+    meta_path = target_dir / "metadata.json"
     metadata = {
         "company": company,
         "role": role,
@@ -856,10 +756,16 @@ def main() -> int:
         "lm_pdf": str(lm_pdf_path),
         "cv_pages": pages,
         "lm_pages": lm_pages,
+        "metadata_path": str(meta_path),
+        "tracker_logged": logged,
     }
-    (target_dir / "metadata.json").write_text(
+    meta_path.write_text(
         json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8"
     )
+
+    if args.json:
+        print(json.dumps(metadata, ensure_ascii=False))
+        return 0
 
     print("\n=== TAILORING COMPLETE ===")
     print(f"Company          : {company}")

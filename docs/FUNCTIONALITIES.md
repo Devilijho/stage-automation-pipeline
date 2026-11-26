@@ -13,7 +13,14 @@ Use this reference to understand what each module does without reading the full 
 - **CV Adaptation**: Updates `CV_TITLE`, `CV_AVAILABILITY` (including *Stage conventionné — Université Paris-Saclay* and Île-de-France mobility), role-archetype `CV_ACCROCHE` (`cyber`, `infra`, `web`, `systems`), dynamically includes verified skills from `master_profile.md` with matched keywords **bolded**, and selects the top 3 curated, verified projects with clickable GitHub links.
 - **Cover Letter Adaptation (`build_lm_tex`)**: French *Vous / Moi / Nous* letter with auto-formatted French date (`Bures-sur-Yvette, le ...`), inferred offer city, cleaned prose role titles (no double `"stage"` or `"(H/F)"`), archetype-specific *Vous* hook, and concrete project accomplishments in *Moi*.
 - **Page Verification**: Compiles via `pdflatex` or `tectonic` and verifies `len(PdfReader.pages) == 1`, auto-trimming project bullets (3 → 2 → 1) if needed.
-- **Tracker**: Appends to `data/applications.csv` with columns `Date,Company,Role,URL,Status,CV_Title_Used,Matched_Keywords,CV_PDF,LM_PDF` and prevents duplicates by both normalized URL and normalized `(Company, Role)` across job boards.
+- **Tracker**: Appends to `data/applications.csv` via `scripts/core/storage.py` (with `fcntl.flock` locking and atomic `os.replace` writes) with columns `Date,Company,Role,URL,Status,CV_Title_Used,Matched_Keywords,CV_PDF,LM_PDF`, preventing duplicates by both normalized URL and normalized `(Company, Role)` across job boards. Supports `--json` for structured metadata output.
+
+## 0. Shared Core & Verification (`scripts/core/` & `./stage check`)
+- **`scripts/core/config.py`**: Canonical workspace paths, `.env` loader (`load_project_env`), live atomic `profile.json` I/O (`load_profile`, `save_profile`, `load_preferences`), and `custom_rules` matching.
+- **`scripts/core/storage.py`**: Single source of truth for `data/applications.csv` (`read_applications`, `check_and_log_application`, `update_application_status`, `bulk_update_application_status`, `detect_source`).
+- **`scripts/core/browser_session.py`**: Shared Chrome `SingletonLock` cleanup, Playwright launch config, and atomic `storage_state.json` cookie snapshots.
+- **`scripts/core/llm.py`**: Locked cached LLM fallback (`ask_llm_for_field`, `call_gemini`) auto-selecting local Ollama, Gemini API, Groq, or OpenAI and persisting to `data/llm_answer_cache.json`.
+- **`./stage check` (`scripts/check_code.py` + `tests/`)**: Runs `py_compile`, AST undefined-name checks, optional `ruff`, and the offline unit test suite.
 
 ## 3. Batch Scraper & Ranker (`scripts/batch_apply.py`)
 - **Sources** (`--sources`):

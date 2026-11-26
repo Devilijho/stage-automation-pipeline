@@ -9,7 +9,6 @@ running pipeline commands (`search`, `apply`, `auto`, `open`, `sync`) with live 
 """
 
 import argparse
-import csv
 import html
 import json
 import mimetypes
@@ -25,15 +24,36 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import unquote, urlparse
 
-WORKSPACE = Path(__file__).resolve().parent.parent
-UI_DIR = WORKSPACE / "ui"
-DATA_DIR = WORKSPACE / "data"
-CONFIG_DIR = WORKSPACE / "config"
-OUTPUT_DIR = WORKSPACE / "output"
-SCRIPTS_DIR = WORKSPACE / "scripts"
-APPS_CSV_PATH = DATA_DIR / "applications.csv"
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from core.config import (
+    APPS_CSV_PATH,
+    CONFIG_DIR,
+    DATA_DIR,
+    DEFAULT_PREFERENCES,
+    OUTPUT_DIR,
+    PROFILE_PATH,
+    SCRIPTS_DIR,
+    UI_DIR,
+    UNANSWERED_QUESTIONS_PATH,
+    WORKSPACE,
+    load_preferences,
+    load_profile,
+    load_project_env,
+    save_profile,
+)
+from core.llm import call_gemini
+from core.storage import (
+    bulk_update_application_status,
+    read_applications,
+    update_application_status,
+)
+
+load_project_env()
+
 REPORT_HTML_PATH = DATA_DIR / "rapport_candidatures.html"
-UNANSWERED_QUESTIONS_PATH = DATA_DIR / "unanswered_questions.json"
 PYTHON_BIN = sys.executable
 
 LOG_LOCK = threading.Lock()
@@ -88,35 +108,9 @@ def run_background_script(cmd: List[str], label: str) -> bool:
     return True
 
 
-def read_applications() -> List[Dict[str, str]]:
-    if not APPS_CSV_PATH.exists():
-        return []
-    with APPS_CSV_PATH.open("r", newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
-
-
-def update_application_status(url: str, new_status: str) -> bool:
-    rows = read_applications()
-    if not rows:
-        return False
-    headers = list(rows[0].keys())
-    norm_target = url.strip().rstrip("/").lower()
-    updated = False
-    for r in rows:
-        if (r.get("URL") or "").strip().rstrip("/").lower() == norm_target:
-            r["Status"] = new_status
-            updated = True
-    if updated:
-        with APPS_CSV_PATH.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=headers)
-            writer.writeheader()
-            writer.writerows(rows)
-    return updated
-
-
 def generate_university_report() -> Path:
     rows = read_applications()
-    profile = json.loads((CONFIG_DIR / "profile.json").read_text(encoding="utf-8"))
+    profile = load_profile(PROFILE_PATH)
     p = profile["personal"]
     edu = profile["education"]
     now_str = datetime.now().strftime("%d/%m/%Y à %H:%M")
@@ -214,15 +208,9 @@ class StageHandler(BaseHTTPRequestHandler):
             self.send_file(UI_DIR / "index.html")
         elif path == "/api/applications":
             rows = read_applications()
-            if str(SCRIPTS_DIR) not in sys.path:
-                sys.path.insert(0, str(SCRIPTS_DIR))
             import batch_apply
-            profile_now = json.loads((CONFIG_DIR / "profile.json").read_text(encoding="utf-8"))
-            raw_prefs = profile_now.get("preferences") or {}
-            prefs = {
-                k: [str(x).lower() for x in (raw_prefs.get(k) or v)]
-                for k, v in batch_apply.DEFAULT_PREFERENCES.items()
-            }
+
+            prefs = load_preferences(PROFILE_PATH)
             counts = {"total": len(rows), "applied": 0, "drafted": 0, "manual_portal": 0, "needs_login": 0, "expired": 0, "skipped": 0}
             enriched: List[Dict[str, Any]] = []
             for r in rows:
@@ -241,16 +229,13 @@ class StageHandler(BaseHTTPRequestHandler):
                 enriched.append(item)
             self.send_json({"rows": list(reversed(enriched)), "counts": counts})
         elif path == "/api/profile":
-            profile = json.loads((CONFIG_DIR / "profile.json").read_text(encoding="utf-8"))
-            if str(SCRIPTS_DIR) not in sys.path:
-                sys.path.insert(0, str(SCRIPTS_DIR))
-            import batch_apply
+            profile = load_profile(PROFILE_PATH)
             if "preferences" not in profile:
-                profile["preferences"] = batch_apply.DEFAULT_PREFERENCES
+                profile["preferences"] = DEFAULT_PREFERENCES
             master_md = (CONFIG_DIR / "master_profile.md").read_text(encoding="utf-8") if (CONFIG_DIR / "master_profile.md").exists() else ""
             self.send_json({"profile": profile, "master_md": master_md})
         elif path == "/api/questions":
-            profile = json.loads((CONFIG_DIR / "profile.json").read_text(encoding="utf-8"))
+            profile = load_profile(PROFILE_PATH)
             unanswered: List[Dict[str, Any]] = []
             if UNANSWERED_QUESTIONS_PATH.exists():
                 try:
@@ -259,10 +244,12 @@ class StageHandler(BaseHTTPRequestHandler):
                         unanswered = loaded
                 except Exception:
                     unanswered = []
-            if str(SCRIPTS_DIR) not in sys.path:
-                sys.path.insert(0, str(SCRIPTS_DIR))
             import apply_browser
             verified_skills = sorted(apply_browser.load_master_profile_skills())
+            intern = profile.get("internship", {})
+            start_d = intern.get("start_date", "03/05")
+            end_d = intern.get("end_date", "16/07")
+            dur = intern.get("duration", "3 mois")
             builtin_rules = [
                 {"category": "Non / No", "rule": "Visa, sponsorship, parrainage, handicap / disability"},
                 {"category": "Non / No", "rule": "Bac+5, Master 2, PFE / fin d'études (unless Bac+2/3 accepted)"},
@@ -271,7 +258,7 @@ class StageHandler(BaseHTTPRequestHandler):
                 {"category": "Oui / Yes", "rule": "Full-stack web (frontend, backend, base de données), AI coding tools, recruitment events"},
                 {"category": "Oui / Yes", "rule": "Any verified skill from config/master_profile.md"},
                 {"category": "Checkboxes", "rule": "Auto-check legal/RGPD/terms/required; leave non-required marketing unchecked"},
-                {"category": "Inputs & Dates", "rule": "Experience years -> 1 | Duration -> 3 mois | Start -> 03/05/2026 | End -> 16/07/2026"},
+                {"category": "Inputs & Dates", "rule": f"Experience years -> 1 | Duration -> {dur} | Start -> {start_d} | End -> {end_d}"},
             ]
             self.send_json({
                 "unanswered": unanswered,
@@ -319,11 +306,11 @@ class StageHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/applications/bulk_status":
             urls = body.get("urls") or []
             new_st = body.get("status", "")
-            updated = 0
-            if isinstance(urls, list) and new_st:
-                for u in urls:
-                    if update_application_status(str(u), new_st):
-                        updated += 1
+            updated = (
+                bulk_update_application_status([str(u) for u in urls], new_st)
+                if isinstance(urls, list) and new_st
+                else 0
+            )
             self.send_json({"ok": True, "updated": updated})
         elif parsed.path == "/api/questions":
             q_type = body.get("type", "")
@@ -341,24 +328,22 @@ class StageHandler(BaseHTTPRequestHandler):
             elif q_type == "form_answers":
                 fa = body.get("form_answers", {})
                 if isinstance(fa, dict):
-                    prof_path = CONFIG_DIR / "profile.json"
-                    profile = json.loads(prof_path.read_text(encoding="utf-8"))
+                    profile = load_profile(PROFILE_PATH)
                     profile["form_answers"] = fa
-                    prof_path.write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                    save_profile(profile, PROFILE_PATH)
                     self.send_json({"ok": True})
                 else:
                     self.send_json({"ok": False}, status=400)
             elif q_type == "custom_rules":
                 rules = body.get("custom_rules", [])
                 if isinstance(rules, list):
-                    prof_path = CONFIG_DIR / "profile.json"
-                    profile = json.loads(prof_path.read_text(encoding="utf-8"))
+                    profile = load_profile(PROFILE_PATH)
                     profile["custom_rules"] = [
                         {"keyword": str(r.get("keyword", "")).strip(), "answer": str(r.get("answer", "")).strip()}
                         for r in rules
                         if str(r.get("keyword", "")).strip() and str(r.get("answer", "")).strip()
                     ]
-                    prof_path.write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                    save_profile(profile, PROFILE_PATH)
                     self.send_json({"ok": True, "custom_rules": profile["custom_rules"]})
                 else:
                     self.send_json({"ok": False}, status=400)
@@ -394,18 +379,17 @@ class StageHandler(BaseHTTPRequestHandler):
             else:
                 self.send_json({"ok": False}, status=400)
         elif parsed.path == "/api/preferences":
-            prof_path = CONFIG_DIR / "profile.json"
-            profile = json.loads(prof_path.read_text(encoding="utf-8"))
+            profile = load_profile(PROFILE_PATH)
             prefs = body.get("preferences")
             if isinstance(prefs, dict):
                 profile["preferences"] = prefs
             queries = body.get("queries")
             if isinstance(queries, list) and queries:
                 profile.setdefault("search", {})["queries"] = [str(q).strip() for q in queries if str(q).strip()]
-            prof_path.write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            save_profile(profile, PROFILE_PATH)
             self.send_json({"ok": True})
         elif parsed.path == "/api/import_resume":
-            import base64, io, re, urllib.request
+            import base64, io, re
             from pypdf import PdfReader
 
             b64 = body.get("pdf_base64", "")
@@ -424,12 +408,7 @@ class StageHandler(BaseHTTPRequestHandler):
 
             extracted: Dict[str, Any] = {}
             used_gemini = False
-            if str(SCRIPTS_DIR) not in sys.path:
-                sys.path.insert(0, str(SCRIPTS_DIR))
-            import apply_browser  # loads .env
-
-            g_key = os.environ.get("GEMINI_API_KEY", "").strip()
-            if g_key:
+            if os.environ.get("GEMINI_API_KEY", "").strip():
                 prompt = (
                     "Extract candidate profile fields from this resume text into strict JSON with keys: "
                     "first_name, last_name, email, phone, city, github_url, linkedin_url, school, degree, level, "
@@ -437,28 +416,14 @@ class StageHandler(BaseHTTPRequestHandler):
                     "Only include values explicitly supported by the resume; leave unknown strings empty. Return ONLY valid JSON.\n\n"
                     + cv_text[:6000]
                 )
-                for g_model in (os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite").strip(), "gemini-3.5-flash"):
-                    if not g_model:
-                        continue
+                raw_txt, _ = call_gemini(prompt, timeout=15, json_mode=True)
+                if raw_txt:
                     try:
-                        req = urllib.request.Request(
-                            f"https://generativelanguage.googleapis.com/v1beta/models/{g_model}:generateContent?key={g_key}",
-                            data=json.dumps({
-                                "contents": [{"parts": [{"text": prompt}]}],
-                                "generationConfig": {"temperature": 0.0, "responseMimeType": "application/json"},
-                            }).encode("utf-8"),
-                            headers={"Content-Type": "application/json"},
-                            method="POST",
-                        )
-                        with urllib.request.urlopen(req, timeout=15) as r:
-                            resp_json = json.loads(r.read().decode("utf-8"))
-                            raw_txt = resp_json["candidates"][0]["content"]["parts"][0]["text"].strip()
-                            raw_txt = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_txt)
-                            extracted = json.loads(raw_txt)
-                            used_gemini = True
-                            break
+                        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_txt)
+                        extracted = json.loads(cleaned)
+                        used_gemini = True
                     except Exception:
-                        continue
+                        extracted = {}
 
             # Regex fallback for core contact/link fields
             if not extracted.get("email"):
@@ -478,8 +443,7 @@ class StageHandler(BaseHTTPRequestHandler):
                 if m:
                     extracted["linkedin_url"] = m.group(0)
 
-            prof_path = CONFIG_DIR / "profile.json"
-            profile = json.loads(prof_path.read_text(encoding="utf-8"))
+            profile = load_profile(PROFILE_PATH)
             updated_fields: List[str] = []
 
             def _set(d: Dict[str, Any], key: str, val: Any, label: str) -> None:
@@ -530,7 +494,7 @@ class StageHandler(BaseHTTPRequestHandler):
                 ]
                 updated_fields.append("search.queries")
 
-            prof_path.write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            save_profile(profile, PROFILE_PATH)
             self.send_json({"ok": True, "updated_fields": updated_fields, "used_gemini": used_gemini})
         elif parsed.path == "/api/stop":
             with LOG_LOCK:
