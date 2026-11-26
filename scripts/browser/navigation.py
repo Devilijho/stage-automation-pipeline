@@ -1,10 +1,11 @@
 """Multi-step form navigation, submit button discovery, and validation error diagnostics."""
 
 import re
-from typing import List, Set
+from typing import List, Optional, Set
 
 from playwright.async_api import Page
 
+from browser.adapters import SiteAdapter, resolve_adapter
 from browser.dom_helpers import (
     get_form_root,
     get_form_roots,
@@ -29,39 +30,10 @@ async def uncheck_follow_company(page: Page) -> None:
             continue
 
 
-async def find_submit_button(page: Page):
-    sub_selectors = [
-        "button[data-cy='submitButton']",
-        "button[data-testid='apply-form-submit']",
-        "button[aria-label*='Envoyer la candidature' i]",
-        "button[aria-label*='Submit application' i]",
-        "button:has-text('Envoyer la candidature')",
-        "button:has-text('Envoyer ma candidature')",
-        "button:has-text('Valider ma candidature')",
-        "button:has-text('Je postule')",
-        "button:has-text('Postuler maintenant')",
-        "button:has-text('Submit application')",
-        "#postuler button[type='submit']:visible",
-        "button:has-text('Envoyer')",
-        "a[role='button']:has-text('Envoyer')",
-        "button:has-text('Valider')",
-        "a[role='button']:has-text('Valider')",
-        "button:has-text('Soumettre')",
-        "button:has-text('Submit')",
-        "a[role='button']:has-text('Submit')",
-        "input[type='submit']:visible",
-        "form button[type='submit']:visible",
-        "button:has-text('Postuler')",
-        "a[role='button']:has-text('Postuler')",
-    ]
-    bad_tokens = (
-        "rechercher", "search", "connexion", "connecter", "login", "sign in",
-        "créer un compte", "alerte", "alert", "newsletter", "annuler", "cancel",
-        "cookie", "refuser", "fermer", "close",
-        "suivant", "next", "continue", "continuer", "précédent", "previous",
-        "back", "retour", "review", "vérifier",
-        "site du recruteur", "site de l'entreprise", "site de l’entreprise", "sur le site",
-    )
+async def find_submit_button(page: Page, adapter: Optional[SiteAdapter] = None):
+    active_adapter = adapter or resolve_adapter(page.url or "")
+    sub_selectors = active_adapter.submit_selectors
+    bad_tokens = active_adapter.bad_button_tokens
     for _, ctx in await get_form_roots(page):
         for sel in sub_selectors:
             try:
@@ -82,49 +54,10 @@ async def find_submit_button(page: Page):
     return None
 
 
-async def try_click_next_step(page: Page) -> bool:
-    try:
-        discard_btn = page.locator("div[role='dialog']:has-text('Save this application') button[aria-label='Dismiss'], div[role='dialog']:has-text('Enregistrer cette candidature') button[aria-label='Ignorer']").first
-        if await discard_btn.count() > 0 and await discard_btn.is_visible(timeout=200):
-            await discard_btn.click()
-            await page.wait_for_timeout(300)
-    except Exception:
-        pass
-    try:
-        open_opt = page.locator(".basic-typeahead__selectable:visible, .artdeco-typeahead__result:visible, [role='listbox'] [role='option']:visible").first
-        if await open_opt.count() > 0 and await open_opt.is_visible(timeout=200):
-            await open_opt.click()
-            await page.wait_for_timeout(200)
-    except Exception:
-        pass
-    try:
-        del_exp = page.locator("button:has-text('Delete experience'):visible, button:has-text('Supprimer l’expérience'):visible").first
-        save_exp = page.locator("button:has-text('Save'):visible, button:has-text('Enregistrer'):visible").first
-        if await del_exp.count() > 0 and await save_exp.count() > 0 and await save_exp.is_enabled():
-            await save_exp.click()
-            await page.wait_for_timeout(600)
-    except Exception:
-        pass
-    next_selectors = [
-        "button[data-easy-apply-next-button]",
-        "button[aria-label*='étape suivante' i]",
-        "button[aria-label*='next step' i]",
-        "button[aria-label*='Vérifier' i]",
-        "button[aria-label*='Review' i]",
-        "button:has-text('Save and Continue')",
-        "button:has-text('Enregistrer et continuer')",
-        "button:has-text('Suivant')",
-        "a[role='button']:has-text('Suivant')",
-        "button:has-text('Vérifier')",
-        "button:has-text('Continuer')",
-        "a[role='button']:has-text('Continuer')",
-        "button:has-text('Continue')",
-        "a[role='button']:has-text('Continue')",
-        "button:has-text('Next')",
-        "a[role='button']:has-text('Next')",
-        "button:has-text('Review')",
-        "button:has-text('Valider')",
-    ]
+async def try_click_next_step(page: Page, adapter: Optional[SiteAdapter] = None) -> bool:
+    active_adapter = adapter or resolve_adapter(page.url or "")
+    await active_adapter.before_next_step(page)
+    next_selectors = active_adapter.next_selectors
     for _, ctx in await get_form_roots(page):
         for sel in next_selectors:
             try:

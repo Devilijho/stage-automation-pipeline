@@ -23,7 +23,7 @@ cv-proyect/
 ├── scripts/
 │   ├── core/              # Shared core package (config/profile I/O, locked atomic CSV storage, Chrome session, LLM cache, logging, `offer_text.py` role/company cleaning)
 │   ├── scrapers/          # Job board scrapers, HTTP/Playwright pools, HTML parsers, and BUT 2/3 offer scoring
-│   ├── browser/           # Playwright form automation (ATS detection, question rules, DOM helpers, navigation, runner)
+│   ├── browser/           # Playwright form automation (`adapters/` per-site rules for 7 boards + Generic external, ATS detection, question rules, DOM helpers, navigation, runner)
 │   ├── sync_github.py     # Indexes public/private/collaborative GitHub repos via `gh` + `git log --author`
 │   ├── tailor.py          # ATS keyword matcher + grounded CV/LM LaTeX compiler + 1-page verifier (`--json` supported)
 │   ├── batch_apply.py     # CLI orchestrator for `scripts/scrapers/` -> `tailor.py` -> `apply_browser.py`
@@ -36,7 +36,7 @@ cv-proyect/
 │   ├── index.html         # Single-page dark-mode dashboard HTML shell (ES | FR | EN)
 │   ├── styles.css         # Dashboard styles
 │   ├── i18n.js            # FR / ES / EN UI translations
-│   ├── app.js             # Tracker, Fetch, Apply, Manual Review & Profile dashboard logic
+│   ├── app.js             # Tracker, Fetch, Apply, Semi-Automatic & Profile dashboard logic
 │   └── qa.js              # Q&A, LLM cache & Custom Rules tab logic
 ├── data/
 │   ├── applications.csv   # Deduplicated offer tracker with `CV_PDF` & `LM_PDF` links [gitignored]

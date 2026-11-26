@@ -5,6 +5,8 @@ from typing import Any, List, Optional, Tuple
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
+from browser.adapters import SiteAdapter, resolve_adapter
+
 
 async def accept_cookies_if_present(page: Page) -> bool:
     selectors = [
@@ -51,27 +53,13 @@ async def accept_cookies_if_present(page: Page) -> bool:
     return False
 
 
-async def click_apply_and_follow_redirect(page: Page) -> Tuple[Page, bool]:
-    selectors = [
-        "button.jobs-apply-button:visible",
-        "button[aria-label*='Candidature simplifiée' i]:visible",
-        "button[aria-label*='Easy Apply' i]:visible",
-        "button:has-text('Candidature simplifiée'):visible",
-        "button:has-text('Easy Apply'):visible",
-        "button:has-text('Postuler sur le site'):visible",
-        "a:has-text('Postuler sur le site'):visible",
-        "button:has-text('Postuler'):visible",
-        "a:has-text('Postuler'):visible",
-        "a[role='button']:has-text('Postuler'):visible",
-        "button:has-text('Apply'):visible",
-        "a:has-text('Apply'):visible",
-        "a[role='button']:has-text('Apply'):visible",
-    ]
+async def click_apply_and_follow_redirect(
+    page: Page, adapter: Optional[SiteAdapter] = None
+) -> Tuple[Page, bool]:
+    active_adapter = adapter or resolve_adapter(page.url or "")
+    selectors = active_adapter.apply_selectors
     try:
-        await page.wait_for_selector(
-            "button.jobs-apply-button, button:has-text('Candidature simplifiée'), button:has-text('Easy Apply'), button:has-text('Postuler'), a:has-text('Postuler'), button:has-text('Apply'), a:has-text('Apply')",
-            timeout=12000,
-        )
+        await page.wait_for_selector(active_adapter.apply_wait_selector, timeout=12000)
     except Exception:
         pass
 
@@ -79,23 +67,8 @@ async def click_apply_and_follow_redirect(page: Page) -> Tuple[Page, bool]:
         await new_page.wait_for_load_state("domcontentloaded", timeout=15000)
         await new_page.wait_for_timeout(1000)
         await accept_cookies_if_present(new_page)
-        for sub_sel in [
-            "a:has-text('Apply for this job'):visible",
-            "a:has-text('Postuler à ce poste'):visible",
-            "button:has-text('Apply for this job'):visible",
-            "button:has-text('Postuler à ce poste'):visible",
-            "button:has-text('Postulez maintenant'):visible",
-            "a:has-text('Postulez maintenant'):visible",
-            "button:has-text('Postuler maintenant'):visible",
-            "a:has-text('Postuler maintenant'):visible",
-            "button:has-text('Apply Now'):visible",
-            "a:has-text('Apply Now'):visible",
-            "button:has-text('APPLY'):visible",
-            "a:has-text('APPLY'):visible",
-            "a.postings-btn[href*='/apply']:visible",
-            "button[data-testid*='apply' i]:visible",
-            "a[data-testid*='apply' i]:visible",
-        ]:
+        dest_adapter = resolve_adapter(new_page.url or "")
+        for sub_sel in dest_adapter.secondary_apply_selectors:
             try:
                 sub_btn = new_page.locator(sub_sel).first
                 if await sub_btn.is_visible(timeout=1000):
@@ -123,12 +96,7 @@ async def click_apply_and_follow_redirect(page: Page) -> Tuple[Page, bool]:
                     continue
 
                 initial_url = page.url
-                is_easy_apply_sel = (
-                    ("jobs-apply-button" in sel)
-                    or ("easy apply" in sel.lower())
-                    or ("candidature simplifiée" in sel.lower())
-                )
-                if is_easy_apply_sel:
+                if active_adapter.is_in_page_apply_selector(sel):
                     await loc.click()
                     await page.wait_for_timeout(1200)
                     return page, True
@@ -280,16 +248,15 @@ async def get_human_question_text(page: Page, el, exclude_texts: Optional[List[s
     return ""
 
 
-async def get_form_root(page: Page):
-    try:
-        ea_modal = page.locator(".jobs-easy-apply-modal").first
-        if await ea_modal.count() > 0 and await ea_modal.is_visible(timeout=400):
-            return ea_modal
-        modal = page.locator("div[role='dialog'][aria-modal='true']").first
-        if await modal.count() > 0 and await modal.is_visible(timeout=400):
-            return modal
-    except Exception:
-        pass
+async def get_form_root(page: Page, adapter: Optional[SiteAdapter] = None):
+    active_adapter = adapter or resolve_adapter(getattr(page, "url", "") or "")
+    for sel in active_adapter.form_root_selectors:
+        try:
+            root_el = page.locator(sel).first
+            if await root_el.count() > 0 and await root_el.is_visible(timeout=400):
+                return root_el
+        except Exception:
+            continue
     return page
 
 

@@ -347,7 +347,7 @@ async function refreshManualCurrent() {
     const card = document.getElementById('manual-current-card');
     if (mc && mc.active) {
       manualCurrentCache = mc;
-      document.getElementById('mc-progress').textContent = `Manual Review (${mc.index}/${mc.total})`;
+      document.getElementById('mc-progress').textContent = `Semi-Automatic (${mc.index}/${mc.total})`;
       document.getElementById('mc-title').textContent = `${mc.company} — ${mc.role}`;
       card.classList.remove('hidden');
     } else {
@@ -425,19 +425,19 @@ function formatBailoutMessage(company, detail) {
   if (/Login wall detected/i.test(cleanDetail)) {
     action = 'Action: Click "Open Login Chrome" in Guide (or run ./stage login), sign in, then use Retry Needs Login.';
   } else if (/Skipped external ATS/i.test(cleanDetail)) {
-    action = 'Action: External portal — switch to Manual Review (with Skip External OFF) or Skip it in Tracker.';
+    action = 'Action: External portal — switch to Semi-Automatic (with Skip External OFF) or Skip it in Tracker.';
   } else if (/validation errors/i.test(cleanDetail)) {
-    action = 'Action: Missing/invalid fields shown above — add answers in Q&A & Rules or finish in Manual Review.';
+    action = 'Action: Missing/invalid fields shown above — add answers in Q&A & Rules or finish in Semi-Automatic.';
   } else if (/unanswered required/i.test(cleanDetail)) {
     action = 'Action: Add these question answers in Tab 7 (Q&A & Rules), then retry.';
   } else if (/No Next\/Submit button found/i.test(cleanDetail)) {
-    action = 'Action: Form layout not recognized automatically — open in Manual Review to submit.';
+    action = 'Action: Form layout not recognized automatically — open in Semi-Automatic to submit.';
   } else if (/confirmation was not detected/i.test(cleanDetail)) {
     action = 'Action: Submit was clicked; check debug screenshot or portal — if sent, mark Applied in Tracker.';
   } else if (/Stuck on step/i.test(cleanDetail)) {
-    action = 'Action: Next button did not advance — check debug screenshot or finish in Manual Review.';
+    action = 'Action: Next button did not advance — check debug screenshot or finish in Semi-Automatic.';
   } else if (/Tab closed/i.test(cleanDetail)) {
-    action = 'Action: Tab closed during redirect — retry in Manual Review.';
+    action = 'Action: Tab closed during redirect — retry in Semi-Automatic.';
   }
   const shortDetail = cleanDetail.replace(/\s*\|\s*Visible buttons:.*$/, '').slice(0, 180);
   const hintHtml = action ? `<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">${escapeHtml(action)}</div>` : '';
@@ -451,7 +451,7 @@ function renderCleanLogs(lines) {
     const line = (raw || '').trim();
     if (!line || line.startsWith('---') || line.startsWith('Call log:') || line.startsWith('- waiting for') || line.startsWith('- attempting click') || line.startsWith('× ') || line.startsWith('- element is') || line.startsWith('- scrolling') || line.startsWith('- done scrolling') || line.startsWith('- <div') || line.startsWith('- retrying')) continue;
     let m;
-    if ((m = line.match(/^===\s*Manual Review\s*\[([^\]]+)\]:\s*(.+?)\s*===$/))) {
+    if ((m = line.match(/^===\s*(?:Manual Review|Semi-Automatic Apply)\s*\[([^\]]+)\]:\s*(.+?)\s*===$/))) {
       events.push({ cls: 'info', badge: `Step ${m[1]}`, text: `<strong>${escapeHtml(m[2])}</strong> — Opening browser &amp; Finder...` });
     } else if (line.startsWith('===')) {
       continue;

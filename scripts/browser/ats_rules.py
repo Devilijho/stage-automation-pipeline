@@ -6,6 +6,12 @@ from typing import Dict, List, Optional, Tuple
 
 from playwright.async_api import Page
 
+from browser.adapters import GENERIC_ADAPTER, SITE_ADAPTERS, SiteAdapter, resolve_adapter
+from browser.adapters.base import (
+    DEFAULT_CONFIRMATION_PHRASES,
+    DEFAULT_CONFIRMATION_URL_TOKENS,
+    DEFAULT_EXPIRED_PHRASES,
+)
 from browser.dom_helpers import get_form_roots
 from browser.navigation import collect_validation_errors
 from core.config import DEBUG_DIR
@@ -14,91 +20,12 @@ from core.logging_utils import get_logger
 _log = get_logger("browser.ats_rules")
 
 SITE_CONFIRMATION_PHRASES: Dict[str, Tuple[str, ...]] = {
-    "LinkedIn": (
-        "your application was sent",
-        "votre candidature a été envoyée",
-        "application sent",
-        "candidature envoyée",
-    ),
-    "HelloWork": (
-        "votre candidature a bien été envoyée",
-        "votre candidature a été envoyée",
-        "candidature bien envoyée",
-        "candidature transmise",
-        "nous avons bien reçu votre candidature",
-    ),
-    "Welcome to the Jungle": (
-        "votre candidature a été envoyée",
-        "candidature envoyée",
-        "candidature bien envoyée",
-        "your application has been sent",
-        "application sent",
-    ),
-    "JobTeaser": (
-        "votre candidature a bien été envoyée",
-        "votre candidature a été envoyée",
-        "candidature enregistrée",
-        "candidature envoyée",
-        "your application has been submitted",
-    ),
-    "Indeed": (
-        "your application has been submitted",
-        "votre candidature a été envoyée",
-        "candidature envoyée",
-        "application submitted",
-    ),
-    "APEC": (
-        "votre candidature a bien été transmise",
-        "votre candidature a été transmise",
-        "candidature transmise",
-        "votre candidature a été envoyée",
-    ),
-    "Meteojob": (
-        "votre candidature a bien été envoyée",
-        "votre candidature a été envoyée",
-        "candidature envoyée",
-        "candidature enregistrée",
-    ),
+    adapter.name: adapter.confirmation_phrases for adapter in SITE_ADAPTERS
 }
 
-CONFIRMATION_PHRASES_EXTERNAL: Tuple[str, ...] = (
-    "votre candidature a été envoyée",
-    "votre candidature a bien été",
-    "votre candidature a été transmise",
-    "candidature bien envoyée",
-    "candidature envoyée",
-    "candidature transmise",
-    "candidature prise en compte",
-    "nous avons bien reçu votre candidature",
-    "félicitations, votre candidature",
-    "application sent",
-    "application submitted",
-    "your application was sent",
-    "your application has been submitted",
-    "we have received your application",
-    "received your application",
-    "merci pour votre candidature",
-    "thank you for applying",
-    "thank you for your application",
-    "candidature enregistrée",
-)
+CONFIRMATION_PHRASES_EXTERNAL: Tuple[str, ...] = DEFAULT_CONFIRMATION_PHRASES
 
-EXPIRED_OFFER_PHRASES = [
-    "offre expirée",
-    "cette offre a expiré",
-    "n'est plus disponible",
-    "n’est plus disponible",
-    "cette offre n'est plus",
-    "cette offre n’est plus",
-    "poste pourvu",
-    "offre pourvue",
-    "les candidatures ne sont plus acceptées",
-    "no longer accepting applications",
-    "this job has expired",
-    "job has expired",
-    "no longer available",
-    "expired",
-]
+EXPIRED_OFFER_PHRASES = list(DEFAULT_EXPIRED_PHRASES)
 
 LOGIN_URLS: Dict[str, Tuple[str, str]] = {
     "linkedin": ("LinkedIn", "https://www.linkedin.com/login"),
@@ -110,17 +37,7 @@ LOGIN_URLS: Dict[str, Tuple[str, str]] = {
     "meteojob": ("Meteojob", "https://www.meteojob.com/"),
 }
 
-CONFIRMATION_URL_TOKENS = (
-    "/jobs/apply/confirm",
-    "/apply/confirm",
-    "/application/confirm",
-    "/confirmation",
-    "/thank-you",
-    "/thankyou",
-    "/merci",
-    "applied=true",
-    "submitted=true",
-)
+CONFIRMATION_URL_TOKENS = DEFAULT_CONFIRMATION_URL_TOKENS
 
 
 def detect_ats_provider(url: str) -> str:
@@ -177,16 +94,16 @@ async def check_submission_confirmed(
     pre_submit_url: str = "",
     had_modal: bool = False,
     submit_ok_responses: Optional[List[str]] = None,
+    adapter: Optional[SiteAdapter] = None,
 ) -> bool:
     try:
         if page.is_closed():
             return False
-        u = (page.url or "").lower()
-        if any(tok in u for tok in CONFIRMATION_URL_TOKENS):
+        active_adapter = adapter or resolve_adapter(page.url or "")
+        if active_adapter.is_confirmation_url(page.url or ""):
             return True
 
-        site_name = detect_ats_provider(page.url)
-        phrases = SITE_CONFIRMATION_PHRASES.get(site_name, CONFIRMATION_PHRASES_EXTERNAL)
+        phrases = active_adapter.confirmation_phrases or GENERIC_ADAPTER.confirmation_phrases
         for _, ctx in await get_form_roots(page):
             try:
                 body_text = (await ctx.locator("body").inner_text(timeout=2000)).lower()

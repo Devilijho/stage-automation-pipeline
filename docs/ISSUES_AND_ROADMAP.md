@@ -6,11 +6,9 @@ Tracked improvements and architectural gaps to address next, especially for redu
 - **Problem**: `_answer_selects()` in `scripts/browser/form_filler.py` only handles native `<select>` elements. Modern portals (WTTJ, JobTeaser, Workday, SmartRecruiters, Ashby, Greenhouse) use custom ARIA comboboxes/listboxes, leaving required dropdowns blank (`stuck_step_*` in `debug/`).
 - **Proposed Fix**: Add a handler in `form_filler.py` for `[role='combobox']` / `button[aria-haspopup='listbox']` (click to open, read `[role='option']`, match via rules or `ask_llm_for_field`, and click the target option).
 
-## 2. Dedicated ATS Adapters for Top Blockers (`APEC`, `JobTeaser`, `WTTJ / WelcomeKit`) — *Deferred (#4)*
-- **Problem**: `APEC`, `JobTeaser`, and `WTTJ` make up the majority of `manual_portal` rows because each has custom modal/redirect flows and confirmation screens not always recognized by the generic loop.
-- **Proposed Fix**:
-  - Add per-ATS adapters under `scripts/browser/ats_adapters/` for WelcomeKit's inline drawer, APEC's "Postuler avec mon profil" flow, and JobTeaser's internal vs external apply redirects.
-  - Inspect `debug/*_after_submit.png` screenshots to expand `SITE_CONFIRMATION_PHRASES` in `scripts/browser/ats_rules.py`.
+## 2. Dedicated Site Adapters & Per-Site Hardening (`APEC`, `JobTeaser`, `WTTJ`, `Indeed`, `Meteojob`) — *Phase 1 Implemented (`scripts/browser/adapters/`), Phase 2 Next*
+- **Phase 1 (Done)**: Split site-specific selectors, confirmation phrases, login-wall rules, and lifecycle hooks into `scripts/browser/adapters/` (`base.py`, `registry.py`, and 7 thin site adapters: `linkedin.py`, `hellowork.py`, `wttj.py`, `jobteaser.py`, `indeed.py`, `apec.py`, `meteojob.py`) wired into both Auto-Apply and Semi-Automatic mode with dynamic adapter switching on redirect.
+- **Phase 2 (Next)**: Inspect real failure notes & `debug/*_after_submit.png` screenshots per site to harden `wttj.py`, `jobteaser.py`, `indeed.py`, `apec.py`, and `meteojob.py` individually without affecting LinkedIn/HelloWork.
 
 ## 3. Shadow DOM Traversal in `dom_helpers.py` & `form_filler.py`
 - **Problem**: `xpath=ancestor::...` queries do not cross Shadow DOM boundaries (used by Workday and custom web components).

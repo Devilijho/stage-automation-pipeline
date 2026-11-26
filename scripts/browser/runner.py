@@ -9,8 +9,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from playwright.async_api import Page, async_playwright
 
+from browser.adapters import resolve_adapter
 from browser.ats_rules import (
-    EXPIRED_OFFER_PHRASES,
     LOGIN_URLS,
     _has_visible_modal,
     check_submission_confirmed,
@@ -19,7 +19,6 @@ from browser.ats_rules import (
 )
 from browser.dom_helpers import accept_cookies_if_present, click_apply_and_follow_redirect
 from browser.form_filler import (
-    _prune_blank_linkedin_experience,
     answer_common_questions,
     fill_matching_fields,
     inject_files,
@@ -30,7 +29,6 @@ from browser.navigation import (
     find_submit_button,
     get_step_signature,
     try_click_next_step,
-    uncheck_follow_company,
 )
 from browser.question_rules import load_master_profile_skills
 from core.browser_session import (
@@ -80,8 +78,9 @@ async def process_offer_concurrently(
     cv_pdf = Path(meta["cv_pdf"])
     lm_pdf = Path(meta["lm_pdf"])
 
-    nav_url = url.replace("https://fr.linkedin.com/jobs/view/", "https://www.linkedin.com/jobs/view/")
-    print(f"[*] [{company}] Opening {nav_url}")
+    adapter = resolve_adapter(url)
+    nav_url = adapter.normalize_url(url)
+    print(f"[*] [{company}] Opening {nav_url} (adapter: {adapter.key})")
     try:
         await page.goto(nav_url, wait_until="domcontentloaded", timeout=45000)
         try:
@@ -93,38 +92,31 @@ async def process_offer_concurrently(
         return page, "manual_portal"
 
     await page.wait_for_timeout(1200)
-    if any(k in page.url.lower() for k in ("authwall", "/login", "connexion", "signin", "se-connecter")):
+    adapter = resolve_adapter(page.url)
+    if adapter.is_login_wall(page.url):
         print(f"[!] Bailout [{company}]: Login wall detected ({page.url}) — run './stage login'")
         update_tracker_status(url, company, "needs_login", notes=f"Login wall ({detect_ats_provider(page.url)})")
         return page, "needs_login"
-    if "linkedin.com/jobs/search" in page.url.lower() and "/jobs/view/" in nav_url.lower():
-        print(f"[!] Bailout [{company}]: LinkedIn offer expired/redirected to search results -> 'expired'")
+    if adapter.is_expired_redirect(page.url, nav_url):
+        print(f"[!] Bailout [{company}]: {adapter.name} offer expired/redirected -> 'expired'")
         update_tracker_status(url, company, "expired", notes="Offer expired/redirected to search")
         return page, "expired"
     await accept_cookies_if_present(page)
-    active_page, clicked = await click_apply_and_follow_redirect(page)
+    active_page, clicked = await click_apply_and_follow_redirect(page, adapter=adapter)
     if active_page.is_closed():
         print(f"[!] Bailout [{company}]: Tab closed unexpectedly after clicking Apply")
         return active_page, "closed"
 
+    adapter = resolve_adapter(active_page.url)
     ats = detect_ats_provider(active_page.url)
-    print(f"[*] [{company}] Apply clicked: {clicked} | Target: {ats}")
+    print(f"[*] [{company}] Apply clicked: {clicked} | Target: {ats} (adapter: {adapter.key})")
 
-    if "linkedin.com/jobs/search" in active_page.url.lower() and "/jobs/view/" in nav_url.lower():
-        print(f"[!] Bailout [{company}]: LinkedIn offer expired/redirected to search results -> 'expired'")
+    if adapter.is_expired_redirect(active_page.url, nav_url):
+        print(f"[!] Bailout [{company}]: {adapter.name} offer expired/redirected -> 'expired'")
         update_tracker_status(url, company, "expired", notes="Offer expired/redirected to search")
         return active_page, "expired"
 
-    if ats == "LinkedIn" and "linkedin.com/jobs/view" in active_page.url.lower() and not await _has_visible_modal(active_page):
-        try:
-            await active_page.wait_for_timeout(1000)
-            if not await _has_visible_modal(active_page):
-                retry_btn = active_page.locator("button.jobs-apply-button:visible").first
-                if await retry_btn.is_visible(timeout=1000):
-                    await retry_btn.click()
-                    await active_page.wait_for_timeout(1500)
-        except Exception:
-            pass
+    await adapter.after_apply_click(active_page)
 
     if not clicked:
         page_low = ""
@@ -132,7 +124,7 @@ async def process_offer_concurrently(
             page_low = (await active_page.locator("body").inner_text(timeout=1500)).lower()
         except Exception:
             pass
-        if any(p in page_low for p in EXPIRED_OFFER_PHRASES):
+        if adapter.is_expired_text(page_low):
             print(f"[!] Bailout [{company}]: Offer appears closed/expired ({ats}) -> 'expired'")
             update_tracker_status(url, company, "expired", notes=f"Offer closed/expired ({ats})")
             return active_page, "expired"
@@ -141,13 +133,7 @@ async def process_offer_concurrently(
             has_pwd_input = await active_page.locator("input[type='password']:visible").count() > 0
         except Exception:
             pass
-        if any(k in active_page.url.lower() for k in ("authwall", "/login", "connexion", "signin", "se-connecter")) or (
-            has_pwd_input
-        ) or (
-            ats == "APEC"
-            and "mot de passe" in page_low
-            and any(k in page_low for k in ("connectez-vous", "me connecter", "se connecter", "identifiant"))
-        ):
+        if adapter.is_login_wall(active_page.url, body_lower=page_low, has_password_input=has_pwd_input):
             print(f"[!] Bailout [{company}]: Login wall detected ({ats}) -> 'needs_login'")
             update_tracker_status(url, company, "needs_login", notes=f"Login wall ({ats})")
             return active_page, "needs_login"
@@ -167,15 +153,7 @@ async def process_offer_concurrently(
         has_pwd_after_click = await active_page.locator("input[type='password']:visible").count() > 0
     except Exception:
         pass
-    if any(k in active_page.url.lower() for k in ("authwall", "/login", "connexion", "signin", "se-connecter")) or (
-        has_pwd_after_click
-    ) or (
-        "vous avez déjà un compte" in body_low_check and "mot de passe" in body_low_check
-    ) or (
-        ats == "APEC"
-        and "mot de passe" in body_low_check
-        and any(k in body_low_check for k in ("connectez-vous", "identifiant", "me connecter", "se connecter"))
-    ):
+    if adapter.is_login_wall(active_page.url, body_lower=body_low_check, has_password_input=has_pwd_after_click):
         print(f"[!] Bailout [{company}]: Login wall detected ({ats}) -> 'needs_login' — sign in via './stage login'")
         update_tracker_status(url, company, "needs_login", notes=f"Login/account wall ({ats})")
         return active_page, "needs_login"
@@ -206,8 +184,9 @@ async def process_offer_concurrently(
                 pass
             await active_page.wait_for_timeout(600)
 
-            if ats == "LinkedIn":
-                await _prune_blank_linkedin_experience(active_page)
+            adapter = resolve_adapter(active_page.url)
+            ats = detect_ats_provider(active_page.url)
+            await adapter.before_step_fill(active_page)
             step_unanswered: List[str] = []
             filled = await fill_matching_fields(active_page, profile["form_answers"], profile=profile)
             filled.extend(
@@ -227,18 +206,15 @@ async def process_offer_concurrently(
             if attached:
                 await active_page.wait_for_timeout(700)
 
-            is_external = ats not in {
-                "LinkedIn", "HelloWork", "Welcome to the Jungle",
-                "JobTeaser", "Indeed", "APEC", "Meteojob",
-            }
+            is_external = not adapter.is_native_board
             if step == 1 and skip_external and is_external:
                 print(f"[!] Bailout [{company}]: Skipped external ATS ({ats}: {active_page.url})")
                 update_tracker_status(url, company, "manual_portal", notes=f"Skipped external ATS ({ats})")
                 return active_page, "manual_portal"
 
-            submit_btn = await find_submit_button(active_page)
+            submit_btn = await find_submit_button(active_page, adapter=adapter)
             if submit_btn is not None:
-                await uncheck_follow_company(active_page)
+                await adapter.before_submit(active_page)
                 if auto:
                     if step_unanswered:
                         bailout_reason = f"Blocked by unanswered required fields before submit: {step_unanswered}"
@@ -269,6 +245,7 @@ async def process_offer_concurrently(
                                 pre_submit_url=pre_submit_url,
                                 had_modal=had_modal,
                                 submit_ok_responses=submit_ok_responses,
+                                adapter=resolve_adapter(active_page.url),
                             ):
                                 confirmed = True
                                 break
@@ -292,13 +269,13 @@ async def process_offer_concurrently(
                     else:
                         bailout_reason = f"Clicked submit but confirmation was not detected ({ats}){shot_note}"
                     break
-                print(f"[*] [{company}] Ready for manual review.")
+                print(f"[*] [{company}] Ready for semi-automatic review.")
                 return active_page, "ready_for_review"
 
             pre_sig = await get_step_signature(active_page)
-            if not await try_click_next_step(active_page):
-                if step > 1 and ats == "LinkedIn" and not await _has_visible_modal(active_page):
-                    if await check_submission_confirmed(active_page, had_modal=True):
+            if not await try_click_next_step(active_page, adapter=adapter):
+                if step > 1 and adapter.key == "linkedin" and not await _has_visible_modal(active_page):
+                    if await check_submission_confirmed(active_page, had_modal=True, adapter=adapter):
                         update_tracker_status(url, company, "applied", notes="")
                         print(f"[+] [{company}] Confirmed -> 'applied'!")
                         return active_page, "applied"
@@ -483,7 +460,7 @@ async def _run_manual_review(
         except Exception:
             pass
 
-        print(f"\n=== Manual Review [{idx + 1}/{len(meta_paths)}]: {meta.get('company', '')} — {meta.get('role', '')} ===")
+        print(f"\n=== Semi-Automatic Apply [{idx + 1}/{len(meta_paths)}]: {meta.get('company', '')} — {meta.get('role', '')} ===")
 
         try:
             _ = context.pages
@@ -521,7 +498,9 @@ async def _run_manual_review(
                         except Exception:
                             pass
                         try:
+                            cur_adapter = resolve_adapter(active_pg.url)
                             await accept_cookies_if_present(active_pg)
+                            await cur_adapter.before_step_fill(active_pg)
                             re_filled = await fill_matching_fields(active_pg, profile["form_answers"], profile=profile)
                             re_filled.extend(
                                 await answer_common_questions(
@@ -535,7 +514,7 @@ async def _run_manual_review(
                             )
                             attached = await inject_files(active_pg, Path(meta["cv_pdf"]), Path(meta["lm_pdf"]))
                             print(
-                                f"[+] [{meta.get('company', '')}] Re-filled current page: "
+                                f"[+] [{meta.get('company', '')}] Re-filled current page ({cur_adapter.key}): "
                                 f"{len(re_filled)} field(s), {len(attached)} file(s)."
                             )
                         except Exception as exc:
