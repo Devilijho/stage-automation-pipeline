@@ -23,3 +23,10 @@ Tracked improvements and architectural gaps to address next, especially for redu
 ## 6. Spontaneous Mailer Domain Lookup & UI Re-Enable
 - **Problem**: `btn-mail` is disabled in `ui/index.html`, and `scripts/spontaneous_mail.py` guesses `recrutement@<company>.fr` without verifying domains/MX records.
 - **Proposed Fix**: Add website/MX lookup or `api.gouv.fr` enrichment before re-enabling the UI button.
+
+## 7. Debug Sandbox Mode — Known Limitations & Future Upgrades
+- **Fake CV/LM Tailoring (Future Upgrade)**: Currently Debug Fetch (`--debug`) skips `tailor.py` / LaTeX compilation and attaches shared blank 1-page PDFs (`debug/sandbox/empty_cv.pdf` and `debug/sandbox/empty_lm.pdf`) to save disk space and time. A future upgrade can add a fake Law (`Droit`) LaTeX template + `projects.json` so `tailor.py` can also be tested end-to-end in Debug Mode.
+- **Shared Chrome Cookies (Known Limitation)**: Debug Mode currently reuses `.chrome_profile/` cookies so login sessions do not have to be re-entered. A future upgrade can add an optional isolated `.chrome_profile_debug/` session if testing logged-out vs logged-in flows separately is needed.
+- **Non-Tech Question Rules (Known Gap)**: `scripts/browser/question_rules.py::classify_yes_no_question()` and `_PROFILE_SKILL_CATALOG` still contain IT/BUT-specific defaults (e.g., mobile dev, full-stack, tech stack keywords) that may not answer Law (`Droit`) screening questions automatically until rules are generalized per profile domain.
+- **Debug Sandbox Reset Button**: Add a one-click **Reset Debug Sandbox** action in the UI (and `POST /api/debug/reset`) to wipe `debug/sandbox/` and re-seed the default Droit profile (`Camille MOREAU`), CSV, and caches cleanly.
+- **LinkedIn Easy Apply vs External Redirects on Law Offers**: Legal/law offers on LinkedIn, APEC, and WTTJ frequently redirect to external ATS portals (Workday, Taleo, Flatchr, Softy) — making Debug Sandbox ideal for testing `GenericAdapter` and custom ARIA comboboxes (Issue #1).

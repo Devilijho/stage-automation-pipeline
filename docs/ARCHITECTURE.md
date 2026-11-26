@@ -21,7 +21,7 @@ cv-proyect/
 │   ├── base_cv.tex        # Base 1-page LaTeX CV template with marker blocks
 │   └── base_lm.tex        # Base 1-page LaTeX Lettre de Motivation template (Vous / Moi / Nous)
 ├── scripts/
-│   ├── core/              # Shared core package (config/profile I/O, locked atomic CSV storage, Chrome session, LLM cache, logging, `offer_text.py` role/company cleaning)
+│   ├── core/              # Shared core package (config/profile I/O, `sandbox.py` prod/debug path isolation, locked atomic CSV storage, Chrome session, LLM cache, logging, `offer_text.py` role/company cleaning)
 │   ├── scrapers/          # Job board scrapers, HTTP/Playwright pools, HTML parsers, and BUT 2/3 offer scoring
 │   ├── browser/           # Playwright form automation (`adapters/` per-site rules for 7 boards + Generic external, ATS detection, question rules, DOM helpers, navigation, runner)
 │   ├── sync_github.py     # Indexes public/private/collaborative GitHub repos via `gh` + `git log --author`
@@ -44,6 +44,7 @@ cv-proyect/
 │   ├── stagebot.log       # Rotating diagnostic log for browser & UI errors [gitignored]
 │   └── rapport_candidatures.html # Printable University Proof Report [gitignored]
 ├── docs/                  # Architecture, functionalities summary, tuning guide, and known issues/roadmap
+├── debug/                 # Debug screenshots & isolated `debug/sandbox/` runtime state (Droit profile, CSV, empty PDFs) [gitignored]
 └── output/                # Per-company folders containing tailored CV/LM PDFs, `.tex`, `.eml`, & `metadata.json` [gitignored]
 ```
 

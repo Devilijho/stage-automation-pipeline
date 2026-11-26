@@ -21,7 +21,10 @@ from browser.question_rules import (
     log_unanswered_question,
 )
 from core.config import (
+    LLM_CACHE_PATH,
+    MASTER_PROFILE_PATH,
     PROFILE_PATH,
+    UNANSWERED_QUESTIONS_PATH,
     get_postal_code,
     load_custom_rules,
     load_profile,
@@ -30,6 +33,7 @@ from core.config import (
 )
 from core.llm import ask_llm_for_field
 from core.logging_utils import get_logger
+from core.sandbox import WorkspacePaths
 
 _log = get_logger("browser.form_filler")
 
@@ -295,6 +299,8 @@ async def _answer_text_inputs(
     profile: Optional[Dict[str, Any]] = None,
     company: str = "",
     url: str = "",
+    cache_path: Path = LLM_CACHE_PATH,
+    unanswered_path: Path = UNANSWERED_QUESTIONS_PATH,
 ) -> None:
     prof = profile if profile is not None else load_profile(PROFILE_PATH)
     edu = prof.get("education") or {}
@@ -386,7 +392,9 @@ async def _answer_text_inputs(
                         or ("*" in (human_q or ""))
                     )
                     if human_q and is_req:
-                        llm_val = ask_llm_for_field("input", human_q, [], answers, verified_skills)
+                        llm_val = ask_llm_for_field(
+                            "input", human_q, [], answers, verified_skills, cache_path=cache_path
+                        )
                         if llm_val:
                             val = llm_val
 
@@ -405,7 +413,9 @@ async def _answer_text_inputs(
                         step_unanswered.append(human_q)
                         if human_q not in seen_unanswered:
                             seen_unanswered.add(human_q)
-                            log_unanswered_question("input", human_q, [], company=company, url=url)
+                            log_unanswered_question(
+                                "input", human_q, [], company=company, url=url, path=unanswered_path
+                            )
                             print(f"  [?] Unanswered required input: {human_q}")
             except PlaywrightTimeout:
                 continue
@@ -429,6 +439,8 @@ async def _answer_selects(
     *,
     company: str = "",
     url: str = "",
+    cache_path: Path = LLM_CACHE_PATH,
+    unanswered_path: Path = UNANSWERED_QUESTIONS_PATH,
 ) -> None:
     try:
         selects = root.locator("select:visible")
@@ -492,7 +504,12 @@ async def _answer_selects(
                         or ("*" in human_q)
                     )
                     if is_req and clean_opts:
-                        matched_opt = ask_llm_for_field("select", human_q, clean_opts, answers, verified_skills) or None
+                        matched_opt = (
+                            ask_llm_for_field(
+                                "select", human_q, clean_opts, answers, verified_skills, cache_path=cache_path
+                            )
+                            or None
+                        )
 
                 if matched_opt:
                     await sel.select_option(label=matched_opt)
@@ -507,7 +524,9 @@ async def _answer_selects(
                         step_unanswered.append(human_q)
                         if human_q not in seen_unanswered:
                             seen_unanswered.add(human_q)
-                            log_unanswered_question("select", human_q, clean_opts, company=company, url=url)
+                            log_unanswered_question(
+                                "select", human_q, clean_opts, company=company, url=url, path=unanswered_path
+                            )
                             print(f"  [?] Unanswered required select: {human_q} | Options: {clean_opts}")
             except PlaywrightTimeout:
                 continue
@@ -531,6 +550,8 @@ async def _answer_radios_and_pills(
     *,
     company: str = "",
     url: str = "",
+    cache_path: Path = LLM_CACHE_PATH,
+    unanswered_path: Path = UNANSWERED_QUESTIONS_PATH,
 ) -> None:
     # 3. Radio groups (fieldset & ARIA radiogroup)
     try:
@@ -566,7 +587,9 @@ async def _answer_radios_and_pills(
                     choices = ("Oui", "Yes", "J'accepte", "I agree", "Accept", "Accepter")
 
                 if not choices and human_q and option_texts:
-                    llm_choice = ask_llm_for_field("radio", human_q, option_texts, answers, verified_skills)
+                    llm_choice = ask_llm_for_field(
+                        "radio", human_q, option_texts, answers, verified_skills, cache_path=cache_path
+                    )
                     if llm_choice:
                         choices = (llm_choice,)
                 if not choices:
@@ -574,7 +597,9 @@ async def _answer_radios_and_pills(
                         step_unanswered.append(human_q)
                         if human_q not in seen_unanswered:
                             seen_unanswered.add(human_q)
-                            log_unanswered_question("radio", human_q, option_texts, company=company, url=url)
+                            log_unanswered_question(
+                                "radio", human_q, option_texts, company=company, url=url, path=unanswered_path
+                            )
                             print(f"  [?] Unanswered radio: {human_q} | Options: {option_texts}")
                     continue
 
@@ -664,7 +689,9 @@ async def _answer_radios_and_pills(
                 if not choices and any(k in legend for k in ("privacy policy", "privacy notice", "allowing", "contact me", "me contacter", "rgpd", "gdpr", "consent")):
                     choices = ("Oui", "Yes", "J'accepte", "I agree")
                 if not choices and human_q and option_texts:
-                    llm_choice = ask_llm_for_field("radio", human_q, option_texts, answers, verified_skills)
+                    llm_choice = ask_llm_for_field(
+                        "radio", human_q, option_texts, answers, verified_skills, cache_path=cache_path
+                    )
                     if llm_choice:
                         choices = (llm_choice,)
                 if not choices:
@@ -735,7 +762,9 @@ async def _answer_radios_and_pills(
                     saved_val = match_custom_rule(human_q, custom_rules)
                 choices = (saved_val,) if saved_val else classify_yes_no_question(human_q, verified_skills)
                 if not choices:
-                    llm_choice = ask_llm_for_field("radio", human_q, [t for t, _ in btn_pairs], answers, verified_skills)
+                    llm_choice = ask_llm_for_field(
+                        "radio", human_q, [t for t, _ in btn_pairs], answers, verified_skills, cache_path=cache_path
+                    )
                     if llm_choice:
                         choices = (llm_choice,)
                 if not choices:
@@ -765,6 +794,7 @@ async def _answer_checkboxes(
     *,
     company: str = "",
     url: str = "",
+    unanswered_path: Path = UNANSWERED_QUESTIONS_PATH,
 ) -> None:
     try:
         cbs = root.locator("input[type='checkbox'], [role='checkbox']:visible")
@@ -845,7 +875,9 @@ async def _answer_checkboxes(
                     step_unanswered.append(human_q)
                     if human_q not in seen_unanswered:
                         seen_unanswered.add(human_q)
-                        log_unanswered_question("checkbox", human_q, ["checked", "unchecked"], company=company, url=url)
+                        log_unanswered_question(
+                            "checkbox", human_q, ["checked", "unchecked"], company=company, url=url, path=unanswered_path
+                        )
                         print(f"  [?] Unanswered required checkbox: {human_q}")
             except PlaywrightTimeout:
                 continue
@@ -871,26 +903,32 @@ async def _answer_common_questions_in_root(
     profile: Optional[Dict[str, Any]] = None,
     company: str = "",
     url: str = "",
+    cache_path: Path = LLM_CACHE_PATH,
+    unanswered_path: Path = UNANSWERED_QUESTIONS_PATH,
 ) -> None:
     await _answer_text_inputs(
         page, doc_ctx, root, answers, verified_skills,
         seen_unanswered, step_unanswered, saved_answers, custom_rules, answered,
         profile=profile, company=company, url=url,
+        cache_path=cache_path, unanswered_path=unanswered_path,
     )
     await _answer_selects(
         doc_ctx, root, answers, verified_skills,
         seen_unanswered, step_unanswered, saved_answers, custom_rules, answered,
         company=company, url=url,
+        cache_path=cache_path, unanswered_path=unanswered_path,
     )
     await _answer_radios_and_pills(
         doc_ctx, root, answers, verified_skills,
         seen_unanswered, step_unanswered, saved_answers, custom_rules, answered,
         company=company, url=url,
+        cache_path=cache_path, unanswered_path=unanswered_path,
     )
     await _answer_checkboxes(
         doc_ctx, root, verified_skills,
         seen_unanswered, step_unanswered, saved_answers, custom_rules, answered,
         company=company, url=url,
+        unanswered_path=unanswered_path,
     )
 
 
@@ -903,22 +941,29 @@ async def answer_common_questions(
     company: str = "",
     url: str = "",
     profile: Optional[Dict[str, Any]] = None,
+    paths: Optional[WorkspacePaths] = None,
 ) -> List[str]:
+    profile_path = paths.profile_path if paths is not None else PROFILE_PATH
+    master_path = paths.master_profile_path if paths is not None else MASTER_PROFILE_PATH
+    unanswered_path = paths.unanswered_questions_path if paths is not None else UNANSWERED_QUESTIONS_PATH
+    cache_path = paths.llm_cache_path if paths is not None else LLM_CACHE_PATH
+
     if verified_skills is None:
-        verified_skills = load_master_profile_skills()
+        verified_skills = load_master_profile_skills(master_path)
     if seen_unanswered is None:
         seen_unanswered = set()
     if step_unanswered is None:
         step_unanswered = []
-    prof = profile if profile is not None else load_profile(PROFILE_PATH)
-    saved_answers = load_saved_unanswered_answers()
-    custom_rules = load_custom_rules()
+    prof = profile if profile is not None else load_profile(profile_path)
+    saved_answers = load_saved_unanswered_answers(unanswered_path)
+    custom_rules = load_custom_rules(profile_path)
     answered: List[str] = []
     for doc_ctx, root in await get_form_roots(page):
         await _answer_common_questions_in_root(
             page, doc_ctx, root, answers, verified_skills,
             seen_unanswered, step_unanswered, saved_answers, custom_rules, answered,
             profile=prof, company=company, url=url,
+            cache_path=cache_path, unanswered_path=unanswered_path,
         )
     return answered
 

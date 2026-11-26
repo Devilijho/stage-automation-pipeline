@@ -1,6 +1,7 @@
 """Offer scoring, BUT 2/3 & Paris/Saclay ranking, and PFE/Bac+5 filtering."""
 
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.config import PROFILE_PATH, load_preferences, load_profile
@@ -49,20 +50,20 @@ BUT_FRIENDLY_TERMS = (
 )
 
 
-def search_cfg() -> Dict[str, Any]:
-    return load_profile(PROFILE_PATH).get("search") or {}
+def search_cfg(profile_path: Path = PROFILE_PATH) -> Dict[str, Any]:
+    return load_profile(profile_path).get("search") or {}
 
 
-def search_location_li() -> str:
-    return search_cfg().get("location", "Paris, Île-de-France, France")
+def search_location_li(profile_path: Path = PROFILE_PATH) -> str:
+    return search_cfg(profile_path).get("location", "Paris, Île-de-France, France")
 
 
-def search_location_hw() -> str:
-    return search_cfg().get("location_short", "Paris")
+def search_location_hw(profile_path: Path = PROFILE_PATH) -> str:
+    return search_cfg(profile_path).get("location_short", "Paris")
 
 
-def level_boost() -> List[str]:
-    return [str(x).lower() for x in (search_cfg().get("level_boost") or DEFAULT_LEVEL_BOOST)]
+def level_boost(profile_path: Path = PROFILE_PATH) -> List[str]:
+    return [str(x).lower() for x in (search_cfg(profile_path).get("level_boost") or DEFAULT_LEVEL_BOOST)]
 
 
 def is_excluded_final_year_offer(title: str, description: str = "") -> bool:
@@ -86,9 +87,10 @@ def classify_offer_quality(
     matched_keywords: str = "",
     url: str = "",
     prefs: Optional[Dict[str, List[str]]] = None,
+    profile_path: Path = PROFILE_PATH,
 ) -> Tuple[str, int]:
     """Classify an offer into ('high' | 'medium' | 'low', score) using role, distance, work type, and level."""
-    p = prefs if prefs is not None else load_preferences(PROFILE_PATH)
+    p = prefs if prefs is not None else load_preferences(profile_path)
     r_low = (role or "").lower()
     l_low = (location or "").lower()
     d_low = (description or "").lower()
@@ -119,7 +121,7 @@ def classify_offer_quality(
     elif any(loc in f"{l_low} {u_low}" for loc in p.get("avoid_locations", [])) and not is_remote:
         score -= 30
 
-    if any(lvl in f"{r_low} {d_low}" for lvl in level_boost()):
+    if any(lvl in f"{r_low} {d_low}" for lvl in level_boost(profile_path)):
         score += 10
     elif any(lvl in f"{r_low} {d_low}" for lvl in ("bac+5", "bac +5", "master 2", "m2", "pfe")) and not any(
         ok in f"{r_low} {d_low}" for ok in ("bac+2", "bac +2", "bac+3", "bac +3", "but 2", "but 3")
@@ -163,19 +165,33 @@ def is_irrelevant_offer(
     return len({x for x in stems if _term_hit(x, d_low)}) < 2
 
 
-def score_offer(title: str, location: str, description: str) -> int:
+def score_offer(
+    title: str,
+    location: str,
+    description: str,
+    *,
+    profile_path: Path = PROFILE_PATH,
+    prefs: Optional[Dict[str, List[str]]] = None,
+) -> int:
     t_low = title.lower()
     if any(bad in t_low for bad in ("page introuvable", "page not found", "just a moment", "access denied")):
         return -100
     if any(bad in t_low for bad in EXCLUDE_TITLE_TERMS) and "stage" not in t_low:
         return -100
 
-    if is_irrelevant_offer(title, description):
+    p = prefs if prefs is not None else load_preferences(profile_path)
+    if is_irrelevant_offer(title, description, prefs=p):
         return -100
 
     # Filter out Bac+5 / PFE / Fin d'études / Fin de cursus unless Bac+2/3 or BUT is explicitly accepted
     if is_excluded_final_year_offer(title, description):
         return -50
 
-    _, score = classify_offer_quality(title, location=location, description=description)
+    _, score = classify_offer_quality(
+        title,
+        location=location,
+        description=description,
+        prefs=p,
+        profile_path=profile_path,
+    )
     return max(0, score)

@@ -5,7 +5,7 @@ let llmCacheEntries = [];
 async function loadQuestions() {
   const statusEl = document.getElementById('qa-save-status');
   try {
-    const res = await fetch('/api/questions');
+    const res = await fetch(typeof apiUrl === 'function' ? apiUrl('/api/questions') : '/api/questions');
     if (!res.ok) {
       if (statusEl) statusEl.textContent = `Error ${res.status}: Restart StageBot UI server so /api/questions is active.`;
       return;
@@ -159,20 +159,22 @@ function renderUnanswered() {
 }
 
 async function saveUnansweredQuestions() {
+  const isDbg = typeof debugMode !== 'undefined' && debugMode;
   const res = await fetch('/api/questions', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({type: 'unanswered', items: qaData.unanswered || []})
+    body: JSON.stringify({type: 'unanswered', items: qaData.unanswered || [], debug: isDbg})
   });
   const data = await res.json();
   if (data.ok) {
     dirtyUnanswered.clear();
     renderUnanswered();
   }
-  document.getElementById('qa-save-status').textContent = data.ok ? 'Saved to data/unanswered_questions.json!' : 'Save failed.';
+  document.getElementById('qa-save-status').textContent = data.ok ? (isDbg ? 'Saved to debug sandbox!' : 'Saved to data/unanswered_questions.json!') : 'Save failed.';
 }
 
 async function saveFormAnswers() {
+  const isDbg = typeof debugMode !== 'undefined' && debugMode;
   const updated = {};
   document.querySelectorAll('#qa-form-answers-grid input[data-fa-key]').forEach(inp => {
     updated[inp.dataset.faKey] = inp.value;
@@ -181,10 +183,10 @@ async function saveFormAnswers() {
   const res = await fetch('/api/questions', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({type: 'form_answers', form_answers: updated})
+    body: JSON.stringify({type: 'form_answers', form_answers: updated, debug: isDbg})
   });
   const data = await res.json();
-  document.getElementById('fa-save-status').textContent = data.ok ? 'Saved to config/profile.json!' : 'Save failed.';
+  document.getElementById('fa-save-status').textContent = data.ok ? (isDbg ? 'Saved to debug sandbox!' : 'Saved to config/profile.json!') : 'Save failed.';
 }
 
 function renderCustomRules() {
@@ -262,23 +264,24 @@ async function promoteToRule(idx) {
 }
 
 async function saveCustomRules() {
+  const isDbg = typeof debugMode !== 'undefined' && debugMode;
   const res = await fetch('/api/questions', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({type: 'custom_rules', custom_rules: qaData.custom_rules || []})
+    body: JSON.stringify({type: 'custom_rules', custom_rules: qaData.custom_rules || [], debug: isDbg})
   });
   const data = await res.json();
   if (data.ok) {
     qaData.custom_rules = data.custom_rules || qaData.custom_rules;
     renderCustomRules();
   }
-  document.getElementById('cr-save-status').textContent = data.ok ? 'Saved rules to config/profile.json!' : 'Save failed.';
+  document.getElementById('cr-save-status').textContent = data.ok ? (isDbg ? 'Saved rules to debug sandbox!' : 'Saved rules to config/profile.json!') : 'Save failed.';
 }
 
 async function loadLlmCache() {
   const statusEl = document.getElementById('llm-cache-status');
   try {
-    const res = await fetch('/api/llm_cache');
+    const res = await fetch(typeof apiUrl === 'function' ? apiUrl('/api/llm_cache') : '/api/llm_cache');
     if (!res.ok) return;
     const data = await res.json();
     llmCacheEntries = data.entries || [];
@@ -323,7 +326,7 @@ function renderLlmCache() {
       const res = await fetch('/api/llm_cache', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({action: 'update', key: entry.key, answer: inp.value}),
+        body: JSON.stringify({action: 'update', key: entry.key, answer: inp.value, debug: typeof debugMode !== 'undefined' && debugMode}),
       });
       const d = await res.json();
       document.getElementById('llm-cache-status').textContent = d.ok ? 'Updated cached answer.' : (d.error || 'Update failed.');
@@ -350,7 +353,7 @@ function renderLlmCache() {
       const res = await fetch('/api/llm_cache', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({action: 'delete', key: entry.key}),
+        body: JSON.stringify({action: 'delete', key: entry.key, debug: typeof debugMode !== 'undefined' && debugMode}),
       });
       const d = await res.json();
       if (d.ok) {

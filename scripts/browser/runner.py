@@ -42,10 +42,11 @@ from core.config import (
     MANUAL_CURRENT_PATH,
     MANUAL_FILL_PATH,
     MANUAL_SKIP_PATH,
-    PROFILE_PATH,
+    MASTER_PROFILE_PATH,
     WORKSPACE,
 )
 from core.logging_utils import get_logger
+from core.sandbox import WorkspacePaths, ensure_debug_sandbox, get_runtime_paths
 from core.storage import update_application_status
 
 _log = get_logger("browser.runner")
@@ -73,6 +74,7 @@ async def process_offer_concurrently(
     auto: bool,
     skip_external: bool,
     debug: bool = False,
+    paths: Optional[WorkspacePaths] = None,
 ) -> Tuple[Page, str]:
     """Run one offer end-to-end asynchronously so 5 tabs execute simultaneously.
 
@@ -80,8 +82,10 @@ async def process_offer_concurrently(
     the final Submit button or modifying `data/applications.csv`.
     """
     company = meta["company"]
-    cv_pdf = Path(meta["cv_pdf"])
-    lm_pdf = Path(meta["lm_pdf"])
+    raw_cv = Path(meta["cv_pdf"])
+    raw_lm = Path(meta["lm_pdf"])
+    cv_pdf = raw_cv if raw_cv.is_absolute() else (WORKSPACE / raw_cv)
+    lm_pdf = raw_lm if raw_lm.is_absolute() else (WORKSPACE / raw_lm)
 
     def _track(new_status: str, *, force: bool = False, notes: Optional[str] = None) -> None:
         if debug:
@@ -168,7 +172,8 @@ async def process_offer_concurrently(
         _track("needs_login", notes=f"Login/account wall ({ats})")
         return active_page, "needs_login"
 
-    verified_skills = load_master_profile_skills()
+    master_path = paths.master_profile_path if paths is not None else MASTER_PROFILE_PATH
+    verified_skills = load_master_profile_skills(master_path)
     seen_unanswered: Set[str] = set()
     last_step_unanswered: List[str] = []
     bailout_reason = ""
@@ -209,6 +214,7 @@ async def process_offer_concurrently(
                     company=company,
                     url=url,
                     profile=profile,
+                    paths=paths,
                 )
             )
             last_step_unanswered = step_unanswered
@@ -542,7 +548,7 @@ async def _run_manual_review(
                     pass
             print(f"[*] [{meta.get('company', '')}] Ready — submit in Chrome (or click Fill Current Page / Skip / Mark Applied in UI), then close tab.")
             confirmed_here = False
-            verified_skills = load_master_profile_skills()
+            verified_skills = load_master_profile_skills(MASTER_PROFILE_PATH)
             try:
                 while not active_pg.is_closed():
                     if MANUAL_FILL_PATH.exists():
@@ -663,9 +669,11 @@ async def _run_debug_queue(
     meta_paths: List[Path],
     skip_external: bool,
     url_override: str,
+    paths: Optional[WorkspacePaths] = None,
 ) -> None:
     """Visual 1-by-1 Auto-Apply dry-run: single headed Chrome window, never submits or edits CSV."""
-    verified_skills = load_master_profile_skills()
+    master_path = paths.master_profile_path if paths is not None else MASTER_PROFILE_PATH
+    verified_skills = load_master_profile_skills(master_path)
     for idx, mp in enumerate(meta_paths):
         meta = load_json(mp)
         u = url_override if (len(meta_paths) == 1 and url_override) else meta.get("url", "")
@@ -712,7 +720,7 @@ async def _run_debug_queue(
 
         pg = context.pages[0] if context.pages else await context.new_page()
         active_pg, status_res = await process_offer_concurrently(
-            pg, profile, meta, u, auto=True, skip_external=skip_external, debug=True
+            pg, profile, meta, u, auto=True, skip_external=skip_external, debug=True, paths=paths
         )
         _write_debug_state(
             index=idx + 1,
@@ -751,9 +759,14 @@ async def _run_debug_queue(
                                     company=company,
                                     url=u,
                                     profile=profile,
+                                    paths=paths,
                                 )
                             )
-                            attached = await inject_files(active_pg, Path(meta["cv_pdf"]), Path(meta["lm_pdf"]))
+                            raw_cv = Path(meta["cv_pdf"])
+                            raw_lm = Path(meta["lm_pdf"])
+                            cv_abs_fill = raw_cv if raw_cv.is_absolute() else (WORKSPACE / raw_cv)
+                            lm_abs_fill = raw_lm if raw_lm.is_absolute() else (WORKSPACE / raw_lm)
+                            attached = await inject_files(active_pg, cv_abs_fill, lm_abs_fill)
                             print(
                                 f"[+] [{company}] Re-filled current page ({cur_adapter.key}): "
                                 f"{len(re_filled)} field(s), {len(attached)} file(s)."
@@ -825,8 +838,11 @@ async def async_main() -> int:
         help="Job boards to open in --login mode (default: all)",
     )
     args = parser.parse_args()
+    paths = get_runtime_paths(debug=args.debug)
+    if args.debug:
+        ensure_debug_sandbox(paths)
 
-    if not prepare_chrome_profile_dir(CHROME_PROFILE_DIR):
+    if not prepare_chrome_profile_dir(paths.chrome_profile_dir):
         return 1
 
     if args.login:
@@ -837,7 +853,7 @@ async def async_main() -> int:
         print("[!] --meta or --metas is required unless --login is used.")
         return 1
 
-    profile = load_json(PROFILE_PATH)
+    profile = load_json(paths.profile_path)
 
     if args.auto and not args.debug and MANUAL_CURRENT_PATH.exists():
         try:
@@ -847,14 +863,14 @@ async def async_main() -> int:
 
     run_headless = bool(args.auto and not args.headed and not args.debug)
     launch_kwargs = build_chrome_launch_kwargs(
-        CHROME_PROFILE_DIR,
+        paths.chrome_profile_dir,
         headless=run_headless,
         no_viewport=bool(args.debug),
     )
 
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(**launch_kwargs)
-        await restore_storage_cookies(context, CHROME_PROFILE_DIR)
+        await restore_storage_cookies(context, paths.chrome_profile_dir)
         if args.debug:
             await _run_debug_queue(
                 p,
@@ -864,6 +880,7 @@ async def async_main() -> int:
                 meta_paths,
                 skip_external=args.skip_external,
                 url_override=args.url,
+                paths=paths,
             )
         elif args.auto:
             await _run_auto_pool(

@@ -28,12 +28,17 @@ if _SCRIPTS_DIR not in sys.path:
 from core.config import (
     APPS_CSV_PATH,
     DEFAULT_PREFERENCES,
-    PROFILE_PATH,
     SCRIPTS_DIR,
     WORKSPACE,
     load_preferences,
 )
 from core.offer_text import is_generic_company
+from core.sandbox import (
+    create_debug_offer_metadata,
+    ensure_debug_sandbox,
+    get_runtime_paths,
+    resolve_offer_metadata_path,
+)
 from core.storage import (
     detect_source,
     load_existing_offers,
@@ -267,8 +272,11 @@ def main() -> int:
     args = parser.parse_args()
     if args.remake:
         return remake_offers(args.remake)
+    paths = get_runtime_paths(debug=args.debug)
+    if args.debug:
+        ensure_debug_sandbox(paths)
     if not args.queries:
-        args.queries = search_cfg().get("queries") or DEFAULT_QUERIES
+        args.queries = search_cfg(paths.profile_path).get("queries") or DEFAULT_QUERIES
     retry_sources = set(args.sources) if args.sources else None
     quality_filter = set(args.quality) if args.quality else None
     if args.sources is None:
@@ -290,16 +298,17 @@ def main() -> int:
         low = (offer_url or "").lower()
         return any(dom in low for s in allowed for dom in source_domains.get(s, ()))
 
+    prefs = load_preferences(paths.profile_path)
     queue_metas: List[Path] = []
     if args.retry:
         target_statuses = {"drafted", "manual_portal"} if args.retry == "pending" else {args.retry}
-        prefs = load_preferences(PROFILE_PATH)
-        for r in read_applications(APPS_CSV_PATH):
+        for r in read_applications(paths.apps_csv_path):
             tier, _ = classify_offer_quality(
                 r.get("Role", ""),
                 matched_keywords=r.get("Matched_Keywords", ""),
                 url=r.get("URL", ""),
                 prefs=prefs,
+                profile_path=paths.profile_path,
             )
             if (
                 (r.get("Status") or "").strip().lower() in target_statuses
@@ -307,15 +316,15 @@ def main() -> int:
                 and _url_in_sources(r.get("URL", ""), retry_sources)
                 and (not quality_filter or tier in quality_filter)
             ):
-                mp = WORKSPACE / Path(r["CV_PDF"]).parent / "metadata.json"
-                if mp.exists() and mp not in queue_metas:
+                mp = resolve_offer_metadata_path(r, paths)
+                if mp and mp.exists() and mp not in queue_metas:
                     queue_metas.append(mp)
         queue_metas = queue_metas[: args.limit]
         src_note = f" (sources: {', '.join(sorted(retry_sources))})" if retry_sources else ""
         q_note = f" (quality: {', '.join(sorted(quality_filter))})" if quality_filter else ""
         print(f"[*] Retrying {len(queue_metas)} existing '{args.retry}' offer(s){src_note}{q_note}...")
     else:
-        existing_urls, existing_keys = load_existing_offers()
+        existing_urls, existing_keys = load_existing_offers(paths.apps_csv_path)
         raw_offers: List[Dict[str, str]] = []
         seen_urls: Set[str] = set()
         per_query = (
@@ -438,7 +447,7 @@ def main() -> int:
                 dup_count += 1
                 print(f"  [-] Skipping cross-site duplicate: {det['role']} @ {det['company']}")
                 continue
-            sc = score_offer(det["role"], det["location"], det["text"])
+            sc = score_offer(det["role"], det["location"], det["text"], profile_path=paths.profile_path, prefs=prefs)
             if sc < 0:
                 excl_count += 1
                 continue
@@ -447,6 +456,8 @@ def main() -> int:
                 location=det["location"],
                 description=det["text"],
                 url=det.get("url", ""),
+                prefs=prefs,
+                profile_path=paths.profile_path,
             )
             if quality_filter and tier not in quality_filter:
                 qual_drop += 1
@@ -463,44 +474,58 @@ def main() -> int:
 
         detailed_offers.sort(key=lambda x: -x["score"])
         selected = detailed_offers[: args.limit]
-        print(f"[*] Selected top {len(selected)} offers (ranked for BUT 2/3 & Paris/Saclay area).")
+        rank_note = "Debug Sandbox preferences" if args.debug else "BUT 2/3 & Paris/Saclay area"
+        print(f"[*] Selected top {len(selected)} offers (ranked for {rank_note}).")
 
-        company_locks: Dict[str, threading.Lock] = {}
-        locks_guard = threading.Lock()
-
-        def _tailor_safe(offer: Dict[str, str]) -> Optional[Path]:
-            comp_key = re.sub(r"[^\w]+", "_", (offer.get("company") or "company").lower()).strip("_")
-            with locks_guard:
-                lock = company_locks.setdefault(comp_key, threading.Lock())
-            with lock:
-                return run_tailor_for_offer(offer)
-
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            tailor_futs = {pool.submit(_tailor_safe, offer): (idx, offer) for idx, offer in enumerate(selected, 1)}
-            for fut in as_completed(tailor_futs):
-                idx, offer = tailor_futs[fut]
-                meta_path = fut.result()
+        if args.debug:
+            for idx, offer in enumerate(selected, 1):
+                meta_path = create_debug_offer_metadata(offer, paths)
                 print(
-                    f"\n[{idx}/{len(selected)}] Tailored ({offer['source']}): "
+                    f"\n[{idx}/{len(selected)}] Debug Sandbox ({offer['source']}): "
                     f"{offer['role']} @ {offer['company']} (score={offer['score']})"
                 )
                 if meta_path:
                     queue_metas.append(meta_path)
                     meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                    print(f"  -> CV : {meta['cv_pdf']}")
-                    print(f"  -> LM : {meta['lm_pdf']}")
+                    print(f"  -> CV : {meta['cv_pdf']} (empty)")
+                    print(f"  -> LM : {meta['lm_pdf']} (empty)")
+        else:
+            company_locks: Dict[str, threading.Lock] = {}
+            locks_guard = threading.Lock()
 
-        if not queue_metas and not args.scrape_only and APPS_CSV_PATH.exists():
-            for r in read_applications(APPS_CSV_PATH):
+            def _tailor_safe(offer: Dict[str, str]) -> Optional[Path]:
+                comp_key = re.sub(r"[^\w]+", "_", (offer.get("company") or "company").lower()).strip("_")
+                with locks_guard:
+                    lock = company_locks.setdefault(comp_key, threading.Lock())
+                with lock:
+                    return run_tailor_for_offer(offer)
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                tailor_futs = {pool.submit(_tailor_safe, offer): (idx, offer) for idx, offer in enumerate(selected, 1)}
+                for fut in as_completed(tailor_futs):
+                    idx, offer = tailor_futs[fut]
+                    meta_path = fut.result()
+                    print(
+                        f"\n[{idx}/{len(selected)}] Tailored ({offer['source']}): "
+                        f"{offer['role']} @ {offer['company']} (score={offer['score']})"
+                    )
+                    if meta_path:
+                        queue_metas.append(meta_path)
+                        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                        print(f"  -> CV : {meta['cv_pdf']}")
+                        print(f"  -> LM : {meta['lm_pdf']}")
+
+        if not queue_metas and not args.scrape_only and paths.apps_csv_path.exists():
+            for r in read_applications(paths.apps_csv_path):
                 if (r.get("Status") or "").strip().lower() == "drafted" and r.get("CV_PDF"):
-                    mp = WORKSPACE / Path(r["CV_PDF"]).parent / "metadata.json"
-                    if mp.exists() and mp not in queue_metas:
+                    mp = resolve_offer_metadata_path(r, paths)
+                    if mp and mp.exists() and mp not in queue_metas:
                         queue_metas.append(mp)
             if queue_metas:
                 print(f"[*] No brand-new offers found; queuing {len(queue_metas)} pending 'drafted' offer(s).")
 
     if args.scrape_only or not queue_metas:
-        print(f"\n[+] Done! Tailored {len(queue_metas)} offers. Logged in {APPS_CSV_PATH}.")
+        print(f"\n[+] Done! Tailored {len(queue_metas)} offers. Logged in {paths.apps_csv_path}.")
         return 0
 
     print("\n" + "=" * 60)

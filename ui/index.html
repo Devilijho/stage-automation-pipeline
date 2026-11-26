@@ -31,7 +31,7 @@
   <header>
     <div id="page-title" style="font-weight:600;"></div>
     <div class="row">
-      <button class="pill debug-toggle hidden" id="btn-debug-mode" onclick="toggleDebugMode()" title=""></button>
+      <button class="pill debug-toggle" id="btn-debug-mode" onclick="toggleDebugMode()" title=""></button>
       <div class="lang-bar">
         <button class="lang-btn" id="lang-es" onclick="setLang('es')">ES</button>
         <button class="lang-btn" id="lang-fr" onclick="setLang('fr')">FR</button>
@@ -41,6 +41,7 @@
   </header>
 
   <div class="content">
+    <div id="debug-banner" class="debug-banner hidden"></div>
     <!-- TRACKER TAB -->
     <section id="tab-tracker" class="hidden">
       <div class="card row">
@@ -74,7 +75,7 @@
         <button class="secondary" id="btn-skip-filtered" onclick="skipFilteredRows()"></button>
         <button class="secondary" id="btn-remake" onclick="remakeSelected()"></button>
         <button class="secondary" id="btn-refresh" onclick="loadApps()"></button>
-        <a href="/api/report" target="_blank"><button class="secondary" id="btn-report"></button></a>
+        <a id="link-report-tracker" href="/api/report" target="_blank"><button class="secondary" id="btn-report"></button></a>
       </div>
       <div class="card" style="padding: 8px 16px; overflow-x: auto;">
         <table>
@@ -397,7 +398,7 @@
       <div class="card">
         <h4 id="g-s5-t" style="margin-top:0;"></h4>
         <p id="g-s5-d" style="color:var(--muted);"></p>
-        <a href="/api/report" target="_blank"><button class="secondary" id="g-s5-btn"></button></a>
+        <a id="link-report-guide" href="/api/report" target="_blank"><button class="secondary" id="g-s5-btn"></button></a>
       </div>
     </section>
   </div>

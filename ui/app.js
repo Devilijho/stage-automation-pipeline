@@ -11,6 +11,11 @@ function escapeHtml(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+function apiUrl(path) {
+  if (!debugMode) return path;
+  return path + (path.includes('?') ? '&' : '?') + 'debug=1';
+}
+
 function updateDebugUI() {
   const t = I18N[currentLang];
   const btn = document.getElementById('btn-debug-mode');
@@ -19,9 +24,19 @@ function updateDebugUI() {
     btn.textContent = debugMode ? t.debugOn : t.debugOff;
     btn.title = t.debugTitle;
   }
+  const banner = document.getElementById('debug-banner');
+  if (banner) {
+    banner.classList.toggle('hidden', !debugMode);
+    banner.textContent = t.debugBanner || '';
+  }
+  const fetchDesc = document.getElementById('fetch-desc');
+  if (fetchDesc) {
+    fetchDesc.textContent = debugMode ? t.debugFetchDesc : t.fetchDesc;
+    fetchDesc.style.color = debugMode ? 'var(--amber)' : 'var(--muted)';
+  }
   const hint = document.getElementById('apply-hint');
   if (hint) {
-    if (debugMode && runMode === 'auto') {
+    if (debugMode) {
       hint.textContent = t.debugHint;
       hint.style.color = 'var(--amber)';
     } else {
@@ -29,13 +44,42 @@ function updateDebugUI() {
       hint.style.color = 'var(--muted)';
     }
   }
+  const remakeBtn = document.getElementById('btn-remake');
+  if (remakeBtn) {
+    remakeBtn.disabled = debugMode;
+    remakeBtn.style.opacity = debugMode ? '0.45' : '1';
+  }
+  const syncBtn = document.getElementById('btn-sync');
+  if (syncBtn) {
+    syncBtn.disabled = debugMode;
+    syncBtn.style.opacity = debugMode ? '0.45' : '1';
+  }
+  const gSyncBtn = document.getElementById('g-s2-btn');
+  if (gSyncBtn) {
+    gSyncBtn.disabled = debugMode;
+    gSyncBtn.style.opacity = debugMode ? '0.45' : '1';
+  }
+  for (const id of ['link-report-tracker', 'link-report-guide']) {
+    const a = document.getElementById(id);
+    if (a) a.href = apiUrl('/api/report');
+  }
   const nextBtn = document.getElementById('mc-btn-next');
   if (nextBtn) nextBtn.textContent = t.debugNext;
 }
 
 function toggleDebugMode() {
   debugMode = !debugMode;
+  selectedRemake.clear();
+  const cvFrame = document.getElementById('pdf-cv');
+  const lmFrame = document.getElementById('pdf-lm');
+  const prevLbl = document.getElementById('preview-label');
+  if (cvFrame) cvFrame.src = '';
+  if (lmFrame) lmFrame.src = '';
+  if (prevLbl) prevLbl.textContent = I18N[currentLang].previewEmpty;
   updateDebugUI();
+  loadApps();
+  loadProfile();
+  if (typeof loadQuestions === 'function') loadQuestions();
 }
 
 function setRunMode(mode) {
@@ -128,13 +172,11 @@ function showTab(name, btn) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   document.getElementById('page-title').textContent = I18N[currentLang].titles[name] || 'StageBot';
-  const dbgBtn = document.getElementById('btn-debug-mode');
-  if (dbgBtn) dbgBtn.classList.toggle('hidden', name !== 'apply');
   if (name === 'questions' && typeof loadQuestions === 'function') loadQuestions();
 }
 
 async function loadApps() {
-  const res = await fetch('/api/applications');
+  const res = await fetch(apiUrl('/api/applications'));
   const data = await res.json();
   allRows = data.rows || [];
   document.getElementById('st-total').textContent = data.counts.total;
@@ -235,7 +277,7 @@ async function remakeSelected() {
   const res = await fetch('/api/applications/remake', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({urls: Array.from(selectedRemake)})
+    body: JSON.stringify({urls: Array.from(selectedRemake), debug: debugMode})
   });
   const data = await res.json();
   if (!data.ok) { alert(data.error || 'Another job is already running.'); return; }
@@ -248,7 +290,7 @@ async function changeStatus(encodedUrl, status) {
   await fetch('/api/applications/status', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({url: decodeURIComponent(encodedUrl), status})
+    body: JSON.stringify({url: decodeURIComponent(encodedUrl), status, debug: debugMode})
   });
   loadApps();
 }
@@ -266,10 +308,18 @@ function previewDocs(companyEnc, cvEnc, lmEnc) {
 async function openInChrome(cvEnc, urlEnc) {
   const cv_pdf = decodeURIComponent(cvEnc);
   const url = decodeURIComponent(urlEnc);
+  const matchRow = allRows.find(r => (r.URL || '') === url) || {};
   await fetch('/api/run', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({action:'open', cv_pdf, url})
+    body: JSON.stringify({
+      action:'open',
+      cv_pdf,
+      url,
+      company: matchRow.Company || '',
+      role: matchRow.Role || '',
+      debug: debugMode,
+    })
   });
   showTab('apply', document.getElementById('nav-apply'));
   pollLogs();
@@ -294,7 +344,7 @@ async function launchFetch() {
   await fetch('/api/run', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({action:'search', limit, queries, sources, quality, easy_apply: liOn})
+    body: JSON.stringify({action:'search', limit, queries, sources, quality, easy_apply: liOn, debug: debugMode})
   });
   pollLogs();
 }
@@ -342,7 +392,7 @@ async function skipFilteredRows() {
   await fetch('/api/applications/bulk_status', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({urls: visibleUrlsCache, status: 'skipped'})
+    body: JSON.stringify({urls: visibleUrlsCache, status: 'skipped', debug: debugMode})
   });
   await loadApps();
 }
@@ -361,7 +411,7 @@ async function runRetry(retry_status) {
   }).length;
   if (!matchingCount) { alert(`No '${retry_status}' offers match the selected platforms and quality tiers.`); return; }
   const skip_external = document.getElementById('pill-skip').classList.contains('active');
-  const isDebug = debugMode && runMode === 'auto';
+  const isDebug = debugMode;
   await fetch('/api/run', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -457,6 +507,10 @@ async function runLogin(stayOnGuide = false) {
 }
 
 async function runSync() {
+  if (debugMode) {
+    alert('GitHub sync is disabled in Debug Sandbox mode (uses fake Droit profile).');
+    return;
+  }
   await fetch('/api/run', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'sync'})});
   showTab('fetch', document.getElementById('nav-fetch'));
   pollLogs();
@@ -594,11 +648,13 @@ async function pollLogs() {
 }
 
 async function loadProfile() {
-  const res = await fetch('/api/profile');
+  const res = await fetch(apiUrl('/api/profile'));
   const data = await res.json();
   document.getElementById('master-md').textContent = data.master_md || '';
   const p = data.profile || {};
-  if (p.personal && p.personal.full_name) document.title = `StageBot — ${p.personal.full_name}`;
+  if (p.personal && p.personal.full_name) {
+    document.title = debugMode ? `StageBot [DEBUG] — ${p.personal.full_name}` : `StageBot — ${p.personal.full_name}`;
+  }
   if (p.education && p.internship) {
     document.getElementById('sidebar-sub').textContent = `${p.education.level} · ${p.internship.start_date} → ${p.internship.end_date}`;
   }
@@ -628,7 +684,7 @@ async function importResumePdf(input) {
       const res = await fetch('/api/import_resume', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({filename: file.name, pdf_base64: reader.result}),
+        body: JSON.stringify({filename: file.name, pdf_base64: reader.result, debug: debugMode}),
       });
       const data = await res.json();
       if (data.ok) {
@@ -664,7 +720,7 @@ async function savePreferences() {
   await fetch('/api/preferences', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({preferences, queries}),
+    body: JSON.stringify({preferences, queries, debug: debugMode}),
   });
   document.getElementById('pref-save-status').textContent = 'Saved & reclassified!';
   await loadProfile();
