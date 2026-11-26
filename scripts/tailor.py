@@ -344,12 +344,19 @@ def parse_verified_master_profile() -> Tuple[set, List[Dict[str, Any]]]:
     return verified_keywords, projects
 
 
+def _term_in_text(term: str, text_lower: str) -> bool:
+    t = term.strip().lower()
+    if not t:
+        return False
+    return re.search(rf"(?<![a-z0-9]){re.escape(t)}(?![a-z0-9+#])", text_lower) is not None
+
+
 def extract_matched_keywords(job_text: str, verified_keywords: set) -> List[str]:
     text_lower = " " + job_text.lower() + " "
     matched: List[str] = []
     for kw in verified_keywords:
         aliases = KNOWN_KEYWORDS.get(kw, [kw.lower()])
-        if kw.lower() in text_lower or any(a in text_lower for a in aliases):
+        if _term_in_text(kw, text_lower) or any(_term_in_text(a, text_lower) for a in aliases):
             matched.append(kw)
     return matched
 
@@ -503,24 +510,32 @@ def compile_tex(tex_path: Path) -> Tuple[Path, str]:
     tectonic_bin = shutil.which("tectonic")
 
     if pdflatex_bin:
-        res = subprocess.run(
-            [pdflatex_bin, "-interaction=nonstopmode", "-halt-on-error", tex_path.name],
-            cwd=str(out_dir),
-            capture_output=True,
-            text=True,
-        )
+        try:
+            res = subprocess.run(
+                [pdflatex_bin, "-interaction=nonstopmode", "-halt-on-error", tex_path.name],
+                cwd=str(out_dir),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"pdflatex timed out after 30s for {tex_path.name}") from exc
         log_path = tex_path.with_suffix(".log")
         log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else res.stdout
         if res.returncode != 0:
             raise RuntimeError(f"pdflatex failed for {tex_path.name}:\n{res.stdout[-1500:]}")
         return pdf_path, log_text
     elif tectonic_bin:
-        res = subprocess.run(
-            [tectonic_bin, tex_path.name],
-            cwd=str(out_dir),
-            capture_output=True,
-            text=True,
-        )
+        try:
+            res = subprocess.run(
+                [tectonic_bin, tex_path.name],
+                cwd=str(out_dir),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"tectonic timed out after 30s for {tex_path.name}") from exc
         if res.returncode != 0:
             raise RuntimeError(f"tectonic failed for {tex_path.name}:\n{res.stderr}\n{res.stdout}")
         return pdf_path, res.stdout + "\n" + res.stderr

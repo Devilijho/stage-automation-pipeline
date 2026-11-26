@@ -17,6 +17,7 @@ data/llm_answer_cache.json
 data/manual_current.json
 data/.manual_skip
 data/.applications.csv.lock
+data/stagebot.log*
 output/
 debug/
 

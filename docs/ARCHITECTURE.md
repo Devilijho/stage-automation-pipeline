@@ -19,7 +19,7 @@ cv-proyect/
 │   ├── base_cv.tex        # Base 1-page LaTeX CV template with marker blocks
 │   └── base_lm.tex        # Base 1-page LaTeX Lettre de Motivation template (Vous / Moi / Nous)
 ├── scripts/
-│   ├── core/              # Shared core package (config/profile I/O, locked atomic CSV storage, Chrome session, LLM cache)
+│   ├── core/              # Shared core package (config/profile I/O, locked atomic CSV storage, Chrome session, LLM cache, logging)
 │   ├── scrapers/          # Job board scrapers, HTTP/Playwright pools, HTML parsers, and BUT 2/3 offer scoring
 │   ├── browser/           # Playwright form automation (ATS detection, question rules, DOM helpers, navigation, runner)
 │   ├── sync_github.py     # Indexes public/private/collaborative GitHub repos via `gh` + `git log --author`
@@ -29,12 +29,13 @@ cv-proyect/
 │   ├── spontaneous_mail.py # Local tech company finder (`api.gouv.fr`) + `.eml` draft builder
 │   ├── ui_server.py       # Local HTTP server (`127.0.0.1:8765`) for the macOS Web UI
 │   └── check_code.py      # Static syntax/undefined-name checks, optional ruff lint, and unit test runner (`./stage check`)
-├── tests/                 # Offline unit test suite (storage locking, scoring, tailor helpers, rules & config)
+├── tests/                 # Offline unit test suite + `tests/fixtures/` HTML snapshots
 ├── ui/
 │   └── index.html         # Single-page dark-mode dashboard (ES | FR | EN)
 ├── data/
 │   ├── applications.csv   # Deduplicated offer tracker with `CV_PDF` & `LM_PDF` links [gitignored]
 │   ├── llm_answer_cache.json # Cached grounded LLM answers for unknown form fields [gitignored]
+│   ├── stagebot.log       # Rotating diagnostic log for browser & UI errors [gitignored]
 │   └── rapport_candidatures.html # Printable University Proof Report [gitignored]
 ├── docs/                  # Architecture, functionalities summary, and tuning guide
 └── output/                # Per-company folders containing tailored CV/LM PDFs, `.tex`, `.eml`, & `metadata.json` [gitignored]

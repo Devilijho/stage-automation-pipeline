@@ -32,6 +32,7 @@ from core.config import (
     CONFIG_DIR,
     DATA_DIR,
     DEFAULT_PREFERENCES,
+    LLM_CACHE_PATH,
     PROFILE_PATH,
     SCRIPTS_DIR,
     UI_DIR,
@@ -42,7 +43,8 @@ from core.config import (
     load_project_env,
     save_profile,
 )
-from core.llm import call_gemini
+from core.llm import call_gemini, delete_llm_cache_entry, load_llm_cache, save_llm_cache
+from core.logging_utils import get_logger
 from core.storage import (
     bulk_update_application_status,
     read_applications,
@@ -50,6 +52,7 @@ from core.storage import (
 )
 
 load_project_env()
+_log = get_logger("ui_server")
 
 REPORT_HTML_PATH = DATA_DIR / "rapport_candidatures.html"
 PYTHON_BIN = sys.executable
@@ -84,23 +87,30 @@ def run_background_script(cmd: List[str], label: str) -> bool:
         global CURRENT_PROC
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(WORKSPACE),
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            start_new_session=True,
-        )
-        CURRENT_PROC = proc
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            append_log(line)
-        code = proc.wait()
-        append_log(f"[{datetime.now().strftime('%H:%M:%S')}] Finished (exit code {code}).")
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(WORKSPACE),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                start_new_session=True,
+            )
+            CURRENT_PROC = proc
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                append_log(line)
+            code = proc.wait()
+            append_log(f"[{datetime.now().strftime('%H:%M:%S')}] Finished (exit code {code}).")
+        except Exception as exc:
+            _log.exception("Background script failed (%s): %s", label, exc)
+            append_log(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {exc}")
+        finally:
+            with LOG_LOCK:
+                CURRENT_PROC = None
 
     threading.Thread(target=worker, daemon=True).start()
     return True
@@ -265,6 +275,26 @@ class StageHandler(BaseHTTPRequestHandler):
                 "verified_skills": verified_skills,
                 "builtin_rules": builtin_rules,
             })
+        elif path == "/api/health":
+            with LOG_LOCK:
+                running = CURRENT_PROC is not None and CURRENT_PROC.poll() is None
+            self.send_json({"ok": True, "running": running})
+        elif path == "/api/llm_cache":
+            cache = load_llm_cache(LLM_CACHE_PATH)
+            entries: List[Dict[str, Any]] = []
+            for k, ans in cache.items():
+                parts = k.split("|", 2)
+                ft = parts[0] if len(parts) > 0 else ""
+                q_txt = parts[1] if len(parts) > 1 else k
+                opts = [o for o in (parts[2].split("||") if len(parts) > 2 and parts[2] else []) if o]
+                entries.append({
+                    "key": k,
+                    "field_type": ft,
+                    "question": q_txt,
+                    "options": opts,
+                    "answer": str(ans),
+                })
+            self.send_json({"entries": entries})
         elif path == "/api/logs":
             with LOG_LOCK:
                 running = CURRENT_PROC is not None and CURRENT_PROC.poll() is None
@@ -294,10 +324,42 @@ class StageHandler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self) -> None:
-        length = int(self.headers.get("Content-Length", "0"))
-        body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self.send_json({"ok": False, "error": "Invalid Content-Length"}, status=400)
+            return
+        try:
+            raw_bytes = self.rfile.read(length) if length > 0 else b""
+            body = json.loads(raw_bytes.decode("utf-8")) if raw_bytes else {}
+            if not isinstance(body, dict):
+                self.send_json({"ok": False, "error": "JSON body must be an object"}, status=400)
+                return
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            self.send_json({"ok": False, "error": f"Invalid JSON: {exc}"}, status=400)
+            return
         parsed = urlparse(self.path)
 
+        if parsed.path == "/api/llm_cache":
+            action = str(body.get("action") or "").strip().lower()
+            key = str(body.get("key") or "")
+            if not key:
+                self.send_json({"ok": False, "error": "Missing key"}, status=400)
+                return
+            if action == "delete":
+                ok = delete_llm_cache_entry(key, LLM_CACHE_PATH)
+                self.send_json({"ok": ok})
+                return
+            if action == "update":
+                ans = str(body.get("answer") or "").strip()
+                if not ans:
+                    self.send_json({"ok": False, "error": "Answer cannot be empty"}, status=400)
+                    return
+                save_llm_cache({key: ans}, LLM_CACHE_PATH)
+                self.send_json({"ok": True})
+                return
+            self.send_json({"ok": False, "error": "Unsupported action"}, status=400)
+            return
         if parsed.path == "/api/applications/status":
             ok = update_application_status(body.get("url", ""), body.get("status", ""))
             self.send_json({"ok": ok})

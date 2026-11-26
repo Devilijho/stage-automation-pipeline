@@ -9,6 +9,9 @@ from playwright.async_api import Page
 from browser.dom_helpers import get_form_roots
 from browser.navigation import collect_validation_errors
 from core.config import DEBUG_DIR
+from core.logging_utils import get_logger
+
+_log = get_logger("browser.ats_rules")
 
 SITE_CONFIRMATION_PHRASES: Dict[str, Tuple[str, ...]] = {
     "LinkedIn": (
@@ -164,7 +167,8 @@ async def save_debug_screenshot(page: Page, company: str, suffix: str = "after_s
         out_path = DEBUG_DIR / f"{safe_comp}_{suffix}.png"
         await page.screenshot(path=str(out_path), full_page=True, timeout=6000)
         return out_path
-    except Exception:
+    except Exception as exc:
+        _log.warning("Failed saving debug screenshot for %s: %s", company, exc)
         return None
 
 
@@ -204,5 +208,6 @@ async def check_submission_confirmed(
                 return True
 
         return False
-    except Exception:
+    except Exception as exc:
+        _log.warning("check_submission_confirmed failed on %s: %s", getattr(page, "url", ""), exc)
         return False

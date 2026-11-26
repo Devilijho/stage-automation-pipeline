@@ -2,7 +2,8 @@
 
 ## Updating Personal Info, Dates, or Search Queries
 Edit `config/profile.json` (single source of truth):
-- `internship.start_date`, `end_date`, `availability_short`, `availability_full` → automatically reflected in `tailor.py` CVs/LMs and the UI sidebar.
+- `personal.postal_code` (optional, or extracted from `personal.location` / `form_answers.code_postal`) → used for postal/ZIP form inputs in `scripts/browser/form_filler.py`.
+- `internship.year` (optional), `start_date`, `end_date`, `availability_short`, `availability_full` → automatically reflected in `tailor.py` CVs/LMs, the UI sidebar, and date inputs / calendar pickers in `scripts/browser/form_filler.py`.
 - `search.queries`, `location`, `location_boost`, `level_boost` → automatically used by `batch_apply.py`.
 - `preferences` (`target_roles`, `avoid_roles`, `preferred_locations`, `idf_locations`, `work_types`, `avoid_locations`) → controls 3-tier offer quality scoring (`high`, `medium`, `low`) in `batch_apply.py` and the Web UI (also editable in **6. Profile & GitHub** or auto-filled via **Import from Resume (PDF)**).
 - `form_answers` → automatically used by `apply_browser.py`.

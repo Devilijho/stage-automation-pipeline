@@ -42,11 +42,22 @@ class TailorTests(unittest.TestCase):
             replace_marker_block(src, "MISSING_BLOCK", "x")
 
     def test_extract_matched_keywords_strict_grounding(self) -> None:
-        verified = {"C++", "Docker", "Python"}
+        verified = {"C", "C++", "TypeScript", "Docker", "Python", "Frontend"}
         matched = extract_matched_keywords("Nous utilisons Python, Docker et Kubernetes.", verified)
         self.assertIn("Python", matched)
         self.assertIn("Docker", matched)
         self.assertNotIn("Kubernetes", matched)
+        # Ensure short aliases ('ts', 'c', 'ui') do not false-match inside regular French words
+        no_false = extract_matched_keywords("Conception et suivi de projets pour nos clients en C++.", verified)
+        self.assertIn("C++", no_false)
+        self.assertNotIn("TypeScript", no_false)
+        self.assertNotIn("C", no_false)
+        self.assertNotIn("Frontend", no_false)
+        # Ensure standalone TS and C/C++ match accurately
+        exact = extract_matched_keywords("Développement C/C++ et TS.", verified)
+        self.assertIn("C", exact)
+        self.assertIn("C++", exact)
+        self.assertIn("TypeScript", exact)
 
 
 if __name__ == "__main__":

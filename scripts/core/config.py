@@ -2,9 +2,11 @@
 
 import json
 import os
+import re
 import tempfile
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 WORKSPACE = Path(__file__).resolve().parent.parent.parent
 CONFIG_DIR = WORKSPACE / "config"
@@ -132,3 +134,65 @@ def match_custom_rule(question: str, custom_rules: List[Dict[str, str]]) -> str:
         if rule["keyword"] in q_low:
             return rule["answer"]
     return ""
+
+
+_FRENCH_ENGLISH_MONTHS: Dict[int, Tuple[str, ...]] = {
+    1: ("janvier", "january"),
+    2: ("février", "fevrier", "february"),
+    3: ("mars", "march"),
+    4: ("avril", "april"),
+    5: ("mai", "may"),
+    6: ("juin", "june"),
+    7: ("juillet", "july"),
+    8: ("août", "aout", "august"),
+    9: ("septembre", "september"),
+    10: ("octobre", "october"),
+    11: ("novembre", "november"),
+    12: ("décembre", "decembre", "december"),
+}
+
+
+def _parse_single_date(raw: str, default_day: int, default_month: int, default_year: int) -> Dict[str, Any]:
+    s = (raw or "").strip()
+    day, month, year = default_day, default_month, default_year
+    m_iso = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})$", s)
+    m_dmy = re.match(r"^(\d{1,2})/(\d{1,2})(?:/(\d{4}))?$", s)
+    if m_iso:
+        year, month, day = int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))
+    elif m_dmy:
+        day, month = int(m_dmy.group(1)), int(m_dmy.group(2))
+        if m_dmy.group(3):
+            year = int(m_dmy.group(3))
+    month = max(1, min(12, month))
+    day = max(1, min(31, day))
+    return {
+        "iso": f"{year:04d}-{month:02d}-{day:02d}",
+        "fr": f"{day:02d}/{month:02d}/{year:04d}",
+        "day": str(day),
+        "month_idx_0": str(month - 1),
+        "year": str(year),
+        "month_names": _FRENCH_ENGLISH_MONTHS.get(month, ("mai", "may")),
+    }
+
+
+def parse_internship_dates(profile: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Derive structured start/end date metadata from profile['internship']."""
+    intern = profile.get("internship") or {}
+    raw_year = str(intern.get("year") or "").strip()
+    default_year = int(raw_year) if raw_year.isdigit() else datetime.now().year
+    start = _parse_single_date(str(intern.get("start_date") or "03/05"), 3, 5, default_year)
+    end = _parse_single_date(str(intern.get("end_date") or "16/07"), 16, 7, int(start["year"]))
+    return {"start": start, "end": end}
+
+
+def get_postal_code(profile: Dict[str, Any]) -> str:
+    """Resolve candidate postal code from profile without hardcoding."""
+    personal = profile.get("personal") or {}
+    fa = profile.get("form_answers") or {}
+    for raw in (personal.get("postal_code"), fa.get("code_postal")):
+        if raw and str(raw).strip():
+            return str(raw).strip()
+    m = re.search(r"\b(\d{5})\b", str(personal.get("location") or ""))
+    if m:
+        return m.group(1)
+    return "91440"

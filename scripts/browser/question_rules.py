@@ -1,11 +1,17 @@
 """Grounded question classification and verified master_profile.md skill matching."""
 
+import fcntl
 import json
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 from core.config import MASTER_PROFILE_PATH, UNANSWERED_QUESTIONS_PATH
+from core.logging_utils import get_logger
+
+_log = get_logger("browser.question_rules")
 
 # Known multi-word or symbolic skills to match safely against config/master_profile.md
 _PROFILE_SKILL_CATALOG = [
@@ -44,8 +50,57 @@ def log_unanswered_question(
     url: str = "",
     path: Path = UNANSWERED_QUESTIONS_PATH,
 ) -> None:
-    """Manual unanswered_questions.json logging disabled in favor of cached LLM auto-answer."""
-    return
+    """Persist unanswered required questions (when rules + LLM fail) for manual review in the UI."""
+    q_clean = re.sub(r"\s+", " ", (question or "")).strip()
+    if not q_clean:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = path.parent / f".{path.name}.lock"
+        with lock_path.open("a+", encoding="utf-8") as lock_f:
+            fcntl.flock(lock_f, fcntl.LOCK_EX)
+            try:
+                items: List[Dict[str, object]] = []
+                if path.exists():
+                    try:
+                        loaded = json.loads(path.read_text(encoding="utf-8"))
+                        if isinstance(loaded, list):
+                            items = loaded
+                    except Exception as exc:
+                        _log.warning("Failed reading %s: %s", path.name, exc)
+                key = (field_type.strip().lower(), q_clean.lower())
+                for existing in items:
+                    ex_key = (
+                        str(existing.get("field_type") or "").strip().lower(),
+                        str(existing.get("question") or "").strip().lower(),
+                    )
+                    if ex_key == key:
+                        return
+                items.append({
+                    "field_type": field_type,
+                    "question": q_clean,
+                    "options": list(options[:25]),
+                    "company": company,
+                    "url": url,
+                    "answer": "",
+                })
+                payload = json.dumps(items, indent=2, ensure_ascii=False) + "\n"
+                fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(payload)
+                        f.flush()
+                    os.replace(tmp_name, path)
+                except Exception:
+                    try:
+                        os.unlink(tmp_name)
+                    except OSError:
+                        pass
+                    raise
+            finally:
+                fcntl.flock(lock_f, fcntl.LOCK_UN)
+    except Exception as exc:
+        _log.warning("Failed logging unanswered question %r: %s", q_clean[:80], exc)
 
 
 def load_master_profile_skills(path: Path = MASTER_PROFILE_PATH) -> Set[str]:

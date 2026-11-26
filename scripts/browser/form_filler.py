@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from playwright.async_api import Page
+from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
 from browser.dom_helpers import (
     _commit_autocomplete_if_open,
@@ -18,19 +18,36 @@ from browser.question_rules import (
     classify_yes_no_question,
     load_master_profile_skills,
     load_saved_unanswered_answers,
+    log_unanswered_question,
 )
-from core.config import load_custom_rules, match_custom_rule
+from core.config import (
+    PROFILE_PATH,
+    get_postal_code,
+    load_custom_rules,
+    load_profile,
+    match_custom_rule,
+    parse_internship_dates,
+)
 from core.llm import ask_llm_for_field
+from core.logging_utils import get_logger
+
+_log = get_logger("browser.form_filler")
 
 
-async def fill_matching_fields(page: Page, answers: Dict[str, str]) -> List[str]:
+async def fill_matching_fields(
+    page: Page,
+    answers: Dict[str, str],
+    profile: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    prof = profile if profile is not None else load_profile(PROFILE_PATH)
+    postal_code = get_postal_code(prof)
     field_rules = [
         (["prénom", "prenom", "first name", "firstname", "first_name", "fname"], answers["prenom"]),
         (["nom", "last name", "lastname", "last_name", "lname", "surname"], answers["nom"]),
         (["full name", "nom complet"], answers["nom_complet"]),
         (["e-mail", "email", "courriel", "mail"], answers["email"]),
         (["téléphone", "telephone", "phone", "mobile", "tel", "06 ", "07 "], answers["telephone"]),
-        (["code postal", "postal code", "postalcode", "codepostal", "zip"], "91440"),
+        (["code postal", "postal code", "postalcode", "codepostal", "zip"], postal_code),
         (["ville", "city", "localisation", "location"], answers["ville"]),
         (["école", "ecole", "school", "université", "university"], answers["ecole"]),
         (["niveau", "level", "études", "diplôme"], answers["niveau"]),
@@ -78,13 +95,22 @@ async def fill_matching_fields(page: Page, answers: Dict[str, str]) -> List[str]
     return filled
 
 
-async def try_fill_date_or_calendar(page: Page, el, is_end: bool) -> Optional[str]:
+async def try_fill_date_or_calendar(
+    page: Page,
+    el,
+    is_end: bool,
+    profile: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
     """Fill <input type='date'>, text date input, or click through a calendar selection table."""
-    iso_val = "2026-07-16" if is_end else "2026-05-03"
-    fr_val = "16/07/2026" if is_end else "03/05/2026"
-    target_day = "16" if is_end else "3"
-    target_month_idx = "6" if is_end else "4"  # 0-based: May=4, July=6
-    target_month_names = ("juillet", "july") if is_end else ("mai", "may")
+    prof = profile if profile is not None else load_profile(PROFILE_PATH)
+    parsed_dates = parse_internship_dates(prof)
+    spec = parsed_dates["end" if is_end else "start"]
+    iso_val = spec["iso"]
+    fr_val = spec["fr"]
+    target_day = spec["day"]
+    target_month_idx = spec["month_idx_0"]
+    target_year = spec["year"]
+    target_month_names = spec["month_names"]
 
     itype = (await el.get_attribute("type") or "text").lower()
     if itype == "date":
@@ -98,8 +124,10 @@ async def try_fill_date_or_calendar(page: Page, el, is_end: bool) -> Optional[st
             await el.press("Escape")
             if (await el.input_value() or "").strip():
                 return fr_val
-        except Exception:
+        except PlaywrightTimeout:
             pass
+        except Exception as exc:
+            _log.debug("Text date fill failed (%s), falling back to calendar", exc)
 
     try:
         await el.click()
@@ -109,15 +137,15 @@ async def try_fill_date_or_calendar(page: Page, el, is_end: bool) -> Optional[st
             parent = cal.locator("xpath=ancestor::div[1]").first
             for sel in await parent.locator("select:visible").all():
                 opts = [await o.inner_text() for o in await sel.locator("option").all()]
-                if any("2026" in o for o in opts):
-                    await sel.select_option(label=next(o for o in opts if "2026" in o))
+                if any(target_year in o for o in opts):
+                    await sel.select_option(label=next(o for o in opts if target_year in o))
                 elif any(m in o.lower() for o in opts for m in target_month_names):
                     m_lbl = next(o for o in opts if any(m in o.lower() for m in target_month_names))
                     await sel.select_option(label=m_lbl)
 
             for _ in range(8):
                 cal_txt = (await parent.inner_text()).lower()
-                if any(m in cal_txt for m in target_month_names) and "2026" in cal_txt:
+                if any(m in cal_txt for m in target_month_names) and target_year in cal_txt:
                     break
                 nxt = parent.locator("button[aria-label*='next' i], button[aria-label*='suivant' i], button:has-text('>')").first
                 if await nxt.count() > 0 and await nxt.is_visible(timeout=300):
@@ -133,8 +161,10 @@ async def try_fill_date_or_calendar(page: Page, el, is_end: bool) -> Optional[st
                 await day_btn.click()
                 await page.wait_for_timeout(300)
                 return f"calendar -> {fr_val}"
-    except Exception:
+    except PlaywrightTimeout:
         pass
+    except Exception as exc:
+        _log.warning("Calendar date fill error: %s", exc)
     return None
 
 
@@ -261,8 +291,18 @@ async def _answer_text_inputs(
     saved_answers: Dict[str, str],
     custom_rules: List[Dict[str, str]],
     answered: List[str],
+    *,
+    profile: Optional[Dict[str, Any]] = None,
+    company: str = "",
+    url: str = "",
 ) -> None:
-    default_school = "IUT d'Orsay"
+    prof = profile if profile is not None else load_profile(PROFILE_PATH)
+    edu = prof.get("education") or {}
+    default_school = answers.get("ecole") or edu.get("school") or "IUT d'Orsay"
+    secondary_school = edu.get("secondary_school") or ""
+    school_org = f"{secondary_school} / {default_school}".strip(" /")
+    postal_code = get_postal_code(prof)
+    formation = answers.get("formation") or edu.get("degree") or "BUT 2 Informatique"
     try:
         inputs = root.locator("input:visible, textarea:visible")
         for i in range(await inputs.count()):
@@ -284,11 +324,12 @@ async def _answer_text_inputs(
 
                 val = ""
                 if any(k in q for k in ("your title", "votre titre", "intitulé du poste")):
-                    val = "Étudiant BUT 2 Informatique / Développeur (École 42)"
+                    val = f"Étudiant {formation} / Développeur"
                 elif any(k in q for k in ("company", "entreprise", "société")) and "linkedin" not in q:
-                    val = "École 42 Paris / IUT d'Orsay"
+                    val = school_org
                 elif "description" in q:
-                    val = "Développement C/C++/TypeScript, systèmes Linux, Docker, SQL, réseaux et sécurité (projets Webserv, Transcendence, Chaski-Booking)."
+                    skills_preview = ", ".join(sorted(verified_skills)[:8]) or "C/C++, TypeScript, Linux, Docker, SQL"
+                    val = f"Développement logiciel, systèmes et sécurité ({skills_preview})."
                 elif any(
                     k in q
                     for k in (
@@ -298,13 +339,14 @@ async def _answer_text_inputs(
                     )
                 ):
                     val = (
-                        f"Bonjour, étudiant en {answers.get('formation', 'BUT 2 Informatique')} ({answers.get('ecole', default_school)}) et à l'École 42 Paris, "
-                        f"je recherche un stage de {answers.get('disponibilite', '3 mois du 03/05 au 16/07')}. "
-                        f"Opérationnel en C/C++, TypeScript, Linux, Docker et SQL, je serais ravi de rejoindre votre équipe. "
-                        f"Cordialement, {answers.get('nom_complet', 'Santiago FUENTES LLANOS')}."
+                        f"Bonjour, étudiant en {formation} ({default_school}), "
+                        f"je recherche un stage ({answers.get('disponibilite', '3 mois')}). "
+                        f"Opérationnel sur {', '.join(sorted(verified_skills)[:6]) or 'C/C++, Linux, SQL'}, "
+                        f"je serais ravi de rejoindre votre équipe. "
+                        f"Cordialement, {answers.get('nom_complet', '')}."
                     )
                 elif any(k in q_all for k in ("code postal", "postal code", "postalcode", "codepostal", "zip")):
-                    val = "91440"
+                    val = postal_code
                 elif any(k in q for k in ("adresse électronique", "e-mail", "email")):
                     val = answers.get("email", "")
                 elif any(k in q for k in ("année", "années", "years", "combien d'exp", "how long", "how many years")):
@@ -312,19 +354,19 @@ async def _answer_text_inputs(
                 elif any(k in q for k in ("durée", "duration", "combien de mois", "months")):
                     val = "3" if is_num else answers.get("duree", "3 mois")
                 elif any(k in q for k in ("date de fin", "end date", "jusqu", "to date", "fin de stage")):
-                    res_date = await try_fill_date_or_calendar(page, el, is_end=True)
+                    res_date = await try_fill_date_or_calendar(page, el, is_end=True, profile=prof)
                     if res_date:
                         answered.append(f"end_date -> {res_date}")
                         continue
                 elif any(k in q for k in ("date de début", "start date", "quand pouvez", "when can you", "disponib", "à partir", "date")):
-                    res_date = await try_fill_date_or_calendar(page, el, is_end=False)
+                    res_date = await try_fill_date_or_calendar(page, el, is_end=False, profile=prof)
                     if res_date:
                         answered.append(f"start_date -> {res_date}")
                         continue
                 elif any(k in q for k in ("salaire", "rémunération", "gratification", "salary", "compensation")):
                     val = "800" if is_num else "Gratification légale"
                 elif any(k in q for k in ("ville", "city", "localisation", "londres, paris", "paris, new york", "location")):
-                    val = f"{answers.get('ville', 'Bures-sur-Yvette')}, France"
+                    val = f"{answers.get('ville', 'Paris')}, France"
                 elif is_num:
                     val = "1"
 
@@ -363,11 +405,15 @@ async def _answer_text_inputs(
                         step_unanswered.append(human_q)
                         if human_q not in seen_unanswered:
                             seen_unanswered.add(human_q)
+                            log_unanswered_question("input", human_q, [], company=company, url=url)
                             print(f"  [?] Unanswered required input: {human_q}")
-            except Exception:
+            except PlaywrightTimeout:
                 continue
-    except Exception:
-        pass
+            except Exception as exc:
+                _log.warning("Text input fill error: %s", exc)
+                continue
+    except Exception as exc:
+        _log.warning("Text inputs scan error: %s", exc)
 
 
 async def _answer_selects(
@@ -380,6 +426,9 @@ async def _answer_selects(
     saved_answers: Dict[str, str],
     custom_rules: List[Dict[str, str]],
     answered: List[str],
+    *,
+    company: str = "",
+    url: str = "",
 ) -> None:
     try:
         selects = root.locator("select:visible")
@@ -458,11 +507,15 @@ async def _answer_selects(
                         step_unanswered.append(human_q)
                         if human_q not in seen_unanswered:
                             seen_unanswered.add(human_q)
+                            log_unanswered_question("select", human_q, clean_opts, company=company, url=url)
                             print(f"  [?] Unanswered required select: {human_q} | Options: {clean_opts}")
-            except Exception:
+            except PlaywrightTimeout:
                 continue
-    except Exception:
-        pass
+            except Exception as exc:
+                _log.warning("Select fill error: %s", exc)
+                continue
+    except Exception as exc:
+        _log.warning("Selects scan error: %s", exc)
 
 
 async def _answer_radios_and_pills(
@@ -475,6 +528,9 @@ async def _answer_radios_and_pills(
     saved_answers: Dict[str, str],
     custom_rules: List[Dict[str, str]],
     answered: List[str],
+    *,
+    company: str = "",
+    url: str = "",
 ) -> None:
     # 3. Radio groups (fieldset & ARIA radiogroup)
     try:
@@ -518,6 +574,7 @@ async def _answer_radios_and_pills(
                         step_unanswered.append(human_q)
                         if human_q not in seen_unanswered:
                             seen_unanswered.add(human_q)
+                            log_unanswered_question("radio", human_q, option_texts, company=company, url=url)
                             print(f"  [?] Unanswered radio: {human_q} | Options: {option_texts}")
                     continue
 
@@ -705,6 +762,9 @@ async def _answer_checkboxes(
     saved_answers: Dict[str, str],
     custom_rules: List[Dict[str, str]],
     answered: List[str],
+    *,
+    company: str = "",
+    url: str = "",
 ) -> None:
     try:
         cbs = root.locator("input[type='checkbox'], [role='checkbox']:visible")
@@ -785,11 +845,15 @@ async def _answer_checkboxes(
                     step_unanswered.append(human_q)
                     if human_q not in seen_unanswered:
                         seen_unanswered.add(human_q)
+                        log_unanswered_question("checkbox", human_q, ["checked", "unchecked"], company=company, url=url)
                         print(f"  [?] Unanswered required checkbox: {human_q}")
-            except Exception:
+            except PlaywrightTimeout:
                 continue
-    except Exception:
-        pass
+            except Exception as exc:
+                _log.warning("Checkbox fill error: %s", exc)
+                continue
+    except Exception as exc:
+        _log.warning("Checkboxes scan error: %s", exc)
 
 
 async def _answer_common_questions_in_root(
@@ -803,22 +867,30 @@ async def _answer_common_questions_in_root(
     saved_answers: Dict[str, str],
     custom_rules: List[Dict[str, str]],
     answered: List[str],
+    *,
+    profile: Optional[Dict[str, Any]] = None,
+    company: str = "",
+    url: str = "",
 ) -> None:
     await _answer_text_inputs(
         page, doc_ctx, root, answers, verified_skills,
         seen_unanswered, step_unanswered, saved_answers, custom_rules, answered,
+        profile=profile, company=company, url=url,
     )
     await _answer_selects(
         doc_ctx, root, answers, verified_skills,
         seen_unanswered, step_unanswered, saved_answers, custom_rules, answered,
+        company=company, url=url,
     )
     await _answer_radios_and_pills(
         doc_ctx, root, answers, verified_skills,
         seen_unanswered, step_unanswered, saved_answers, custom_rules, answered,
+        company=company, url=url,
     )
     await _answer_checkboxes(
         doc_ctx, root, verified_skills,
         seen_unanswered, step_unanswered, saved_answers, custom_rules, answered,
+        company=company, url=url,
     )
 
 
@@ -830,6 +902,7 @@ async def answer_common_questions(
     step_unanswered: Optional[List[str]] = None,
     company: str = "",
     url: str = "",
+    profile: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     if verified_skills is None:
         verified_skills = load_master_profile_skills()
@@ -837,6 +910,7 @@ async def answer_common_questions(
         seen_unanswered = set()
     if step_unanswered is None:
         step_unanswered = []
+    prof = profile if profile is not None else load_profile(PROFILE_PATH)
     saved_answers = load_saved_unanswered_answers()
     custom_rules = load_custom_rules()
     answered: List[str] = []
@@ -844,6 +918,7 @@ async def answer_common_questions(
         await _answer_common_questions_in_root(
             page, doc_ctx, root, answers, verified_skills,
             seen_unanswered, step_unanswered, saved_answers, custom_rules, answered,
+            profile=prof, company=company, url=url,
         )
     return answered
 

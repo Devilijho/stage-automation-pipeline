@@ -33,6 +33,21 @@ def load_llm_cache(path: Path = LLM_CACHE_PATH) -> Dict[str, str]:
         return {}
 
 
+def _write_cache_atomic(path: Path, data: Dict[str, str]) -> None:
+    payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+            f.flush()
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+
+
 def save_llm_cache(cache: Dict[str, str], path: Path = LLM_CACHE_PATH) -> None:
     """Atomically persist cached LLM answers under an exclusive file lock."""
     try:
@@ -49,22 +64,39 @@ def save_llm_cache(cache: Dict[str, str], path: Path = LLM_CACHE_PATH) -> None:
                     except Exception:
                         pass
                 merged.update(cache)
-                payload = json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
-                fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        f.write(payload)
-                        f.flush()
-                    os.replace(tmp_name, path)
-                except Exception:
-                    try:
-                        os.unlink(tmp_name)
-                    except OSError:
-                        pass
+                _write_cache_atomic(path, merged)
             finally:
                 fcntl.flock(lock_f, fcntl.LOCK_UN)
     except Exception:
         pass
+
+
+def replace_llm_cache(cache: Dict[str, str], path: Path = LLM_CACHE_PATH) -> None:
+    """Atomically replace the entire LLM cache dictionary under an exclusive file lock."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _cache_lock_path(path).open("a+", encoding="utf-8") as lock_f:
+        fcntl.flock(lock_f, fcntl.LOCK_EX)
+        try:
+            _write_cache_atomic(path, cache)
+        finally:
+            fcntl.flock(lock_f, fcntl.LOCK_UN)
+
+
+def delete_llm_cache_entry(key: str, path: Path = LLM_CACHE_PATH) -> bool:
+    """Delete a single entry from the LLM answer cache under an exclusive lock."""
+    if not path.exists() or not key:
+        return False
+    with _cache_lock_path(path).open("a+", encoding="utf-8") as lock_f:
+        fcntl.flock(lock_f, fcntl.LOCK_EX)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or key not in data:
+                return False
+            del data[key]
+            _write_cache_atomic(path, data)
+            return True
+        finally:
+            fcntl.flock(lock_f, fcntl.LOCK_UN)
 
 
 def call_gemini(

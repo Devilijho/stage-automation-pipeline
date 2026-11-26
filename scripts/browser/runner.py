@@ -46,7 +46,10 @@ from core.config import (
     PROFILE_PATH,
     WORKSPACE,
 )
+from core.logging_utils import get_logger
 from core.storage import update_application_status
+
+_log = get_logger("browser.runner")
 
 
 def load_json(path: Path) -> Dict[str, Any]:
@@ -199,7 +202,7 @@ async def process_offer_concurrently(
             if ats == "LinkedIn":
                 await _prune_blank_linkedin_experience(active_page)
             step_unanswered: List[str] = []
-            filled = await fill_matching_fields(active_page, profile["form_answers"])
+            filled = await fill_matching_fields(active_page, profile["form_answers"], profile=profile)
             filled.extend(
                 await answer_common_questions(
                     active_page,
@@ -209,6 +212,7 @@ async def process_offer_concurrently(
                     step_unanswered=step_unanswered,
                     company=company,
                     url=url,
+                    profile=profile,
                 )
             )
             last_step_unanswered = step_unanswered
@@ -395,9 +399,11 @@ async def _run_auto_pool(
                     timeout=90,
                 )
             except asyncio.TimeoutError:
+                _log.warning("[%s] Worker timed out after 90s", comp)
                 print(f"[!] Bailout [{comp}]: Timed out after 90s -> 'manual_portal'")
                 update_tracker_status(u, comp, "manual_portal")
             except Exception as e:
+                _log.exception("[%s] Unexpected worker error: %s", comp, e)
                 print(f"[!] Bailout [{comp}]: Unexpected worker error ({e}) -> 'manual_portal'")
                 update_tracker_status(u, comp, "manual_portal")
             finally:

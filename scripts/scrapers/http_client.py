@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from core.browser_session import (
     build_chrome_launch_kwargs,
@@ -27,11 +28,18 @@ _THREAD_LOCAL = threading.local()
 
 
 def get_http_session() -> requests.Session:
-    """Return a thread-local requests.Session with connection pooling."""
+    """Return a thread-local requests.Session with connection pooling and retry/backoff."""
     sess = getattr(_THREAD_LOCAL, "session", None)
     if sess is None:
         sess = requests.Session()
-        adapter = HTTPAdapter(pool_connections=16, pool_maxsize=16)
+        retry = Retry(
+            total=3,
+            backoff_factor=0.6,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=("GET", "POST"),
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(pool_connections=16, pool_maxsize=16, max_retries=retry)
         sess.mount("https://", adapter)
         sess.mount("http://", adapter)
         sess.headers.update(HEADERS)

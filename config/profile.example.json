@@ -7,6 +7,7 @@
     "phone": "+33 6 00 00 00 00",
     "location": "Paris, France",
     "city": "Paris",
+    "postal_code": "75000",
     "country": "France"
   },
   "links": {
@@ -22,6 +23,7 @@
     "graduation_year": "2028"
   },
   "internship": {
+    "year": "2026",
     "start_date": "03/05",
     "end_date": "16/07",
     "start_date_fr": "3 mai",
