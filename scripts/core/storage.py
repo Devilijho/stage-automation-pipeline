@@ -186,6 +186,54 @@ def check_and_log_application(
             fcntl.flock(lock_f, fcntl.LOCK_UN)
 
 
+def refresh_application(
+    url: str,
+    company: str,
+    role: str,
+    cv_title: str,
+    matched_keywords: List[str],
+    cv_pdf: Union[Path, str],
+    lm_pdf: Union[Path, str],
+    *,
+    path: Path = APPS_CSV_PATH,
+    workspace: Path = WORKSPACE,
+) -> Tuple[bool, str]:
+    """Update an existing row in place after a CV remake (keeps Date and Status).
+
+    Returns (found, previous_cv_pdf). Never creates rows; `found=False` means no row matched the URL.
+    """
+    if not path.exists() or not normalize_url(url):
+        return False, ""
+    target = normalize_url(url)
+    with _lock_path_for(path).open("a+", encoding="utf-8") as lock_f:
+        fcntl.flock(lock_f, fcntl.LOCK_EX)
+        try:
+            with path.open("r", newline="", encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
+            old_cv = ""
+            found = False
+            for r in rows:
+                for col in CSV_HEADERS:
+                    r.setdefault(col, "")
+                if normalize_url(r.get("URL") or "") != target:
+                    continue
+                found = True
+                old_cv = r.get("CV_PDF") or old_cv
+                r.update({
+                    "Company": company,
+                    "Role": role,
+                    "CV_Title_Used": cv_title,
+                    "Matched_Keywords": "; ".join(matched_keywords),
+                    "CV_PDF": _relativize_pdf(cv_pdf, workspace),
+                    "LM_PDF": _relativize_pdf(lm_pdf, workspace),
+                })
+            if found:
+                _atomic_write_csv(path, CSV_HEADERS, rows)
+            return found, old_cv
+        finally:
+            fcntl.flock(lock_f, fcntl.LOCK_UN)
+
+
 def update_application_status(
     url: str,
     new_status: str,

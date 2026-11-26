@@ -124,6 +124,7 @@
           <option value="low">Low</option>
         </select>
         <button class="secondary" id="btn-skip-filtered" onclick="skipFilteredRows()"></button>
+        <button class="secondary" id="btn-remake" onclick="remakeSelected()"></button>
         <button class="secondary" id="btn-refresh" onclick="loadApps()"></button>
         <a href="/api/report" target="_blank"><button class="secondary" id="btn-report"></button></a>
       </div>
@@ -131,6 +132,7 @@
         <table>
           <thead>
             <tr>
+              <th style="width:28px;"><input type="checkbox" id="chk-all" title="Select all visible" onchange="toggleAllRemake(this.checked)"></th>
               <th id="th-date"></th>
               <th id="th-source"></th>
               <th>Quality</th>
@@ -433,7 +435,7 @@ const I18N = {
     navGuide: "1. Intro & Démarrer", navFetch: "2. Chercher Offres", navApply: "3. Postuler", navTracker: "4. Candidatures", navPreview: "5. Aperçu CV & LM", navProfile: "6. Profil & GitHub",
     total: "Total", applied: "Envoyés", drafted: "Brouillons", manual: "Portail", needsLogin: "Connexion", other: "Expirés/Ign.",
     report: "Justificatif Université (IUT)", refresh: "Actualiser",
-    filterPlaceholder: "Filtrer entreprise, poste, mot-clé...", allStatuses: "Tous les statuts", allSources: "Toutes sources", skipFiltered: "Ignorer filtrés",
+    filterPlaceholder: "Filtrer entreprise, poste, mot-clé...", allStatuses: "Tous les statuts", allSources: "Toutes sources", skipFiltered: "Ignorer filtrés", remakeSel: "Refaire CV/LM sélectionnés", remakeNone: "Sélectionnez au moins une offre.", remakeConfirm: "Régénérer CV + LM pour {n} offre(s) ? Les offres déjà postulées sont conservées.",
     thDate: "Date", thSource: "Source", thCompany: "Entreprise", thRole: "Poste", thStatus: "Statut", thDocs: "Documents", thActions: "Actions",
     viewPdf: "Voir PDF", applyBtn: "Postuler",
     fetchHeading: "Récupérer de nouvelles offres (sans postuler)",
@@ -471,7 +473,7 @@ const I18N = {
     navGuide: "1. Intro y Guía", navFetch: "2. Buscar Ofertas", navApply: "3. Postular", navTracker: "4. Candidaturas", navPreview: "5. Vista CV y Carta", navProfile: "6. Perfil y GitHub",
     total: "Total", applied: "Enviadas", drafted: "Borradores", manual: "Portal", needsLogin: "Login", other: "Cerradas",
     report: "Justificante Universidad (IUT)", refresh: "Actualizar",
-    filterPlaceholder: "Filtrar empresa, poste, palabra clave...", allStatuses: "Todos los estados", allSources: "Todas las fuentes", skipFiltered: "Omitir filtrados",
+    filterPlaceholder: "Filtrar empresa, poste, palabra clave...", allStatuses: "Todos los estados", allSources: "Todas las fuentes", skipFiltered: "Omitir filtrados", remakeSel: "Rehacer CV/LM seleccionados", remakeNone: "Selecciona al menos una oferta.", remakeConfirm: "¿Regenerar CV + LM de {n} oferta(s)? Las ya postuladas se conservan.",
     thDate: "Fecha", thSource: "Fuente", thCompany: "Empresa", thRole: "Puesto", thStatus: "Estado", thDocs: "Documentos", thActions: "Acciones",
     viewPdf: "Ver PDF", applyBtn: "Postular",
     fetchHeading: "Buscar nuevas ofertas (solo guardar)",
@@ -509,7 +511,7 @@ const I18N = {
     navGuide: "1. Intro & Guide", navFetch: "2. Fetch Offers", navApply: "3. Apply", navTracker: "4. Applications", navPreview: "5. CV & Letter Preview", navProfile: "6. Profile & GitHub",
     total: "Total", applied: "Applied", drafted: "Drafts", manual: "Portal", needsLogin: "Login", other: "Closed/Skip",
     report: "University Proof Report", refresh: "Refresh",
-    filterPlaceholder: "Filter company, role, keyword...", allStatuses: "All statuses", allSources: "All sources", skipFiltered: "Skip filtered",
+    filterPlaceholder: "Filter company, role, keyword...", allStatuses: "All statuses", allSources: "All sources", skipFiltered: "Skip filtered", remakeSel: "Remake selected CV/LM", remakeNone: "Select at least one offer.", remakeConfirm: "Regenerate CV + LM for {n} offer(s)? Already-applied offers are kept as submitted.",
     thDate: "Date", thSource: "Source", thCompany: "Company", thRole: "Role", thStatus: "Status", thDocs: "Documents", thActions: "Actions",
     viewPdf: "View PDF", applyBtn: "Apply",
     fetchHeading: "Fetch new offers (scrape & tailor only)",
@@ -583,6 +585,7 @@ function setLang(lang) {
   document.getElementById('opt-all').textContent = t.allStatuses;
   document.getElementById('opt-all-src').textContent = t.allSources;
   document.getElementById('btn-skip-filtered').textContent = t.skipFiltered;
+  updateRemakeButton();
   document.getElementById('th-date').textContent = t.thDate;
   document.getElementById('th-source').textContent = t.thSource;
   document.getElementById('th-company').textContent = t.thCompany;
@@ -695,6 +698,7 @@ function renderTable() {
     const qLabel = qual === 'high' ? 'High' : (qual === 'medium' ? 'Medium' : 'Low');
     const tr = document.createElement('tr');
     tr.innerHTML = `
+      <td><input type="checkbox" ${selectedRemake.has(r.URL) ? 'checked' : ''} onchange="toggleRemake('${encodeURIComponent(r.URL || '')}', this.checked)"></td>
       <td style="color:var(--muted);white-space:nowrap;">${r.Date || ''}</td>
       <td><span style="font-size:11px;padding:2px 7px;border-radius:999px;border:1px solid var(--border);color:var(--muted);">${src}</span></td>
       <td><span title="Score: ${r.Score ?? ''}" style="font-size:11px;font-weight:600;padding:2px 7px;border-radius:999px;border:1px solid ${qColor};color:${qColor};">${qLabel}</span></td>
@@ -710,6 +714,44 @@ function renderTable() {
     `;
     tbody.appendChild(tr);
   }
+  updateRemakeButton();
+}
+
+const selectedRemake = new Set();
+
+function updateRemakeButton() {
+  const t = I18N[currentLang];
+  const btn = document.getElementById('btn-remake');
+  if (btn) btn.textContent = `${t.remakeSel} (${selectedRemake.size})`;
+  const all = document.getElementById('chk-all');
+  if (all) all.checked = visibleUrlsCache.length > 0 && visibleUrlsCache.every(u => selectedRemake.has(u));
+}
+
+function toggleRemake(urlEnc, on) {
+  const url = decodeURIComponent(urlEnc);
+  if (on) selectedRemake.add(url); else selectedRemake.delete(url);
+  updateRemakeButton();
+}
+
+function toggleAllRemake(on) {
+  for (const u of visibleUrlsCache) { if (on) selectedRemake.add(u); else selectedRemake.delete(u); }
+  renderTable();
+}
+
+async function remakeSelected() {
+  const t = I18N[currentLang];
+  if (!selectedRemake.size) { alert(t.remakeNone); return; }
+  if (!confirm(t.remakeConfirm.replace('{n}', selectedRemake.size))) return;
+  const res = await fetch('/api/applications/remake', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({urls: Array.from(selectedRemake)})
+  });
+  const data = await res.json();
+  if (!data.ok) { alert(data.error || 'Another job is already running.'); return; }
+  selectedRemake.clear();
+  showTab('apply', document.getElementById('nav-apply'));
+  pollLogs();
 }
 
 async function changeStatus(encodedUrl, status) {

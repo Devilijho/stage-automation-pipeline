@@ -33,7 +33,14 @@ from core.config import (
     WORKSPACE,
     load_preferences,
 )
-from core.storage import load_existing_offers, normalize_company_role_key, read_applications
+from core.offer_text import is_generic_company
+from core.storage import (
+    detect_source,
+    load_existing_offers,
+    normalize_company_role_key,
+    normalize_url,
+    read_applications,
+)
 from scrapers.boards import (
     ALL_SOURCES,
     BROWSER_SCRAPERS,
@@ -71,7 +78,7 @@ __all__ = [
 PYTHON_BIN = sys.executable
 
 
-def run_tailor_for_offer(offer: Dict[str, str]) -> Path | None:
+def run_tailor_for_offer(offer: Dict[str, str], extra_args: Optional[List[str]] = None) -> Path | None:
     cmd = [
         PYTHON_BIN,
         str(SCRIPTS_DIR / "tailor.py"),
@@ -81,6 +88,7 @@ def run_tailor_for_offer(offer: Dict[str, str]) -> Path | None:
         offer["text"],
         "--json",
     ]
+    cmd.extend(extra_args or [])
     if offer.get("company"):
         cmd.extend(["--company", offer["company"]])
     if offer.get("role"):
@@ -114,6 +122,67 @@ def run_tailor_for_offer(offer: Dict[str, str]) -> Path | None:
             if meta_path.exists():
                 return meta_path
     return None
+
+
+def remake_offers(urls: List[str]) -> int:
+    """Re-fetch each tracked offer and regenerate its CV/LM with the current tailoring logic.
+
+    Rows are updated in place (status/date kept); `applied` offers are never touched.
+    """
+    rows = {normalize_url(r.get("URL") or ""): r for r in read_applications(APPS_CSV_PATH)}
+    todo: List[Dict[str, str]] = []
+    for url in urls:
+        row = rows.get(normalize_url(url))
+        if row is None:
+            print(f"  [!] Not in tracker, skipping: {url}")
+        elif (row.get("Status") or "").strip().lower() == "applied":
+            print(f"  [-] Already applied, keeping submitted documents: {row.get('Company')} - {row.get('Role')}")
+        else:
+            todo.append({"source": detect_source(url), "url": row["URL"], "preview": row.get("Role", ""), "_row": row})
+    print(f"[*] Remaking {len(todo)} offer(s)...")
+
+    http_sources = {"LinkedIn", "HelloWork", "WTTJ"}
+    details: List[Tuple[Dict[str, str], Optional[Dict[str, str]]]] = []
+    browser_offers: List[Dict[str, str]] = []
+    for o in todo:
+        if o["source"] in http_sources:
+            try:
+                details.append((o, fetch_offer_details_http(o)))
+                continue
+            except Exception as exc:
+                print(f"  [!] HTTP fetch failed for {o['url']} ({exc}); trying browser session...")
+        browser_offers.append(o)
+
+    if browser_offers:
+        async def _fetch_all() -> List[Tuple[Dict[str, str], Optional[Dict[str, str]]]]:
+            pool = AsyncBrowserPool(max_tabs=5)
+            out: List[Tuple[Dict[str, str], Optional[Dict[str, str]]]] = []
+            try:
+                async def one(o: Dict[str, str]) -> Tuple[Dict[str, str], Optional[Dict[str, str]]]:
+                    try:
+                        return o, await fetch_offer_details_browser(o, pool)
+                    except Exception as exc:
+                        print(f"  [!] Could not re-fetch {o['url']}: {exc}")
+                        return o, None
+                out = list(await asyncio.gather(*[one(o) for o in browser_offers]))
+            finally:
+                await pool.close()
+            return out
+
+        details.extend(asyncio.run(_fetch_all()))
+
+    ok = 0
+    for o, det in details:
+        if det is None:
+            continue
+        row = o["_row"]
+        if is_generic_company(det.get("company", "")) and not is_generic_company(row.get("Company", "")):
+            det["company"] = row["Company"]
+        print(f"  [*] Remaking: {det['role']} @ {det['company']}")
+        if run_tailor_for_offer(det, extra_args=["--remake"]):
+            ok += 1
+    print(f"[+] Remade {ok}/{len(todo)} offer(s). Failures usually mean a login wall: run './stage login' and retry.")
+    return 0 if ok == len(todo) else 1
 
 
 def main() -> int:
@@ -168,7 +237,16 @@ def main() -> int:
         default=None,
         help="Filter offers by desirability tier (high, medium, low)",
     )
+    parser.add_argument(
+        "--remake",
+        nargs="+",
+        metavar="URL",
+        default=None,
+        help="Regenerate CV/LM for these tracked offer URLs with the current tailoring logic",
+    )
     args = parser.parse_args()
+    if args.remake:
+        return remake_offers(args.remake)
     if not args.queries:
         args.queries = search_cfg().get("queries") or DEFAULT_QUERIES
     retry_sources = set(args.sources) if args.sources else None

@@ -18,6 +18,7 @@ from core.storage import (
     normalize_company_role_key,
     normalize_url,
     read_applications,
+    refresh_application,
     update_application_status,
 )
 
@@ -147,6 +148,28 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(updated, 10)
             rows = read_applications(csv_path)
             self.assertEqual(sum(1 for r in rows if r["Status"] == "skipped"), 10)
+
+    def test_refresh_application_updates_in_place_and_keeps_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            csv_path = ws / "data" / "applications.csv"
+            kw = {"path": csv_path, "workspace": ws}
+            url = "https://www.apec.fr/x/1"
+            check_and_log_application("APEC", "blob " * 30, url, "t", ["C"], ws / "a/CV.pdf", ws / "a/LM.pdf", **kw)
+            update_application_status(url, "manual_portal", path=csv_path)
+            found, old = refresh_application(
+                url + "/", "Capgemini", "Développeur Logiciel", "Stage -- Développeur Logiciel",
+                ["C++", "Python"], ws / "b/CV.pdf", ws / "b/LM.pdf", **kw,
+            )
+            self.assertTrue(found)
+            self.assertEqual(old, "a/CV.pdf")
+            rows = read_applications(csv_path)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["Status"], "manual_portal")
+            self.assertEqual(rows[0]["Company"], "Capgemini")
+            self.assertEqual(rows[0]["CV_PDF"], "b/CV.pdf")
+            self.assertEqual(rows[0]["Matched_Keywords"], "C++; Python")
+            self.assertEqual(refresh_application("https://other/9", "X", "Y", "t", [], "c", "l", **kw), (False, ""))
 
 
 if __name__ == "__main__":

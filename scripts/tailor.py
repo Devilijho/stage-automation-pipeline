@@ -32,6 +32,7 @@ if _SCRIPTS_DIR not in sys.path:
 
 from core.config import (
     MASTER_PROFILE_PATH,
+    WORKSPACE,
     OUTPUT_DIR,
     TEMPLATES_DIR,
     load_profile,
@@ -43,7 +44,7 @@ from core.offer_text import (
     sanitize_role,
     truncate_words,
 )
-from core.storage import check_and_log_application
+from core.storage import check_and_log_application, read_applications, refresh_application
 
 BASE_CV_PATH = TEMPLATES_DIR / "base_cv.tex"
 BASE_LM_PATH = TEMPLATES_DIR / "base_lm.tex"
@@ -686,6 +687,24 @@ def render_preview_png(pdf_path: Path) -> Optional[Path]:
     return png if png.exists() else None
 
 
+def remove_orphan_output(old_cv_pdf: str, keep_dir: Path) -> bool:
+    """After a remake moved outputs to a new folder, delete the old folder if nothing else uses it."""
+    if not old_cv_pdf:
+        return False
+    old_dir = (WORKSPACE / Path(old_cv_pdf)).parent.resolve()
+    try:
+        old_dir.relative_to(OUTPUT_DIR.resolve())
+    except ValueError:
+        return False
+    if old_dir == OUTPUT_DIR.resolve() or old_dir == keep_dir.resolve() or not old_dir.is_dir():
+        return False
+    for row in read_applications():
+        if row.get("CV_PDF") and (WORKSPACE / Path(row["CV_PDF"])).parent.resolve() == old_dir:
+            return False
+    shutil.rmtree(old_dir, ignore_errors=True)
+    return True
+
+
 def audit_outputs() -> int:
     """Scan existing `output/*/metadata.json` + CV `.tex` for scraped-noise problems; return #flagged."""
     flagged = 0
@@ -813,6 +832,10 @@ def main() -> int:
     parser.add_argument("--role", default="", help="Override role title")
     parser.add_argument("--force", action="store_true", help="Allow overwriting duplicate entry")
     parser.add_argument("--json", action="store_true", help="Output metadata as JSON on stdout")
+    parser.add_argument(
+        "--remake", action="store_true",
+        help="Regenerate documents for an offer already in applications.csv (updates the row in place, keeps its status)",
+    )
     parser.add_argument("--audit", action="store_true", help="Audit existing output/ folders for scraped-noise CV issues")
     args = parser.parse_args()
 
@@ -928,9 +951,18 @@ def main() -> int:
     lm_pdf_path, lm_log = compile_tex(lm_tex_path)
     _, lm_pages, _ = verify_pdf_one_page(lm_pdf_path, lm_log)
 
-    logged = check_and_log_application(
-        company, role, args.url, cv_title, matched_keywords, cv_pdf_path, lm_pdf_path, force=args.force
-    )
+    logged = False
+    refreshed = False
+    if args.remake:
+        refreshed, old_cv = refresh_application(
+            args.url, company, role, cv_title, matched_keywords, cv_pdf_path, lm_pdf_path
+        )
+        if refreshed:
+            remove_orphan_output(old_cv, target_dir)
+    if not refreshed:
+        logged = check_and_log_application(
+            company, role, args.url, cv_title, matched_keywords, cv_pdf_path, lm_pdf_path, force=args.force
+        )
 
     meta_path = target_dir / "metadata.json"
     metadata = {
@@ -946,6 +978,7 @@ def main() -> int:
         "lm_pages": lm_pages,
         "metadata_path": str(meta_path),
         "tracker_logged": logged,
+        "tracker_refreshed": refreshed,
         "company_is_generic": generic_company,
         "cv_fill_ratio": fill,
         "cv_preview_png": str(preview_png) if preview_png else "",
@@ -967,7 +1000,10 @@ def main() -> int:
     print(f"Matched Keywords : {', '.join(matched_keywords) or 'None'}")
     print(f"CV PDF (1p={pages==1}) : {cv_pdf_path}")
     print(f"LM PDF (1p={lm_pages==1}) : {lm_pdf_path}")
-    print(f"Tracker Logged   : {'Yes (drafted)' if logged else 'Skipped (duplicate)'}")
+    if refreshed:
+        print("Tracker Logged   : Updated existing row (remake)")
+    else:
+        print(f"Tracker Logged   : {'Yes (drafted)' if logged else 'Skipped (duplicate)'}")
     return 0
 
 

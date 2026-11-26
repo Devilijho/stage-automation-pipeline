@@ -47,6 +47,7 @@ from core.llm import call_gemini, delete_llm_cache_entry, load_llm_cache, save_l
 from core.logging_utils import get_logger
 from core.storage import (
     bulk_update_application_status,
+    normalize_url,
     read_applications,
     update_application_status,
 )
@@ -372,6 +373,23 @@ class StageHandler(BaseHTTPRequestHandler):
                 else 0
             )
             self.send_json({"ok": True, "updated": updated})
+        elif parsed.path == "/api/applications/remake":
+            urls = body.get("urls") or []
+            if not isinstance(urls, list) or not urls:
+                self.send_json({"ok": False, "error": "Select at least one offer"}, status=400)
+                return
+            wanted = {normalize_url(str(u)) for u in urls}
+            eligible = [
+                r["URL"] for r in read_applications()
+                if normalize_url(r.get("URL") or "") in wanted
+                and (r.get("Status") or "").strip().lower() != "applied"
+            ]
+            if not eligible:
+                self.send_json({"ok": False, "error": "No eligible offers (already-applied offers are kept as submitted)"})
+                return
+            cmd = [PYTHON_BIN, str(SCRIPTS_DIR / "batch_apply.py"), "--remake", *eligible]
+            started = run_background_script(cmd, f"Remake {len(eligible)} CV/LM")
+            self.send_json({"ok": started, "count": len(eligible), "skipped": len(wanted) - len(eligible)})
         elif parsed.path == "/api/questions":
             q_type = body.get("type", "")
             if q_type == "unanswered":
