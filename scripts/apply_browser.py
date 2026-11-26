@@ -73,8 +73,10 @@ CONFIRMATION_PHRASES = [
     "candidature transmise",
     "candidature prise en compte",
     "nous avons bien reçu votre candidature",
-    "vous avez déjà postulé",
+    "candidature bien envoyée",
     "candidature envoyée",
+    "candidature transmise",
+    "candidature prise en compte",
     "félicitations, votre candidature",
     "application sent",
     "application submitted",
@@ -82,13 +84,9 @@ CONFIRMATION_PHRASES = [
     "your application has been submitted",
     "we have received your application",
     "received your application",
-    "thank you for your interest",
     "merci pour votre candidature",
-    "merci !",
-    "merci,",
     "thank you for applying",
     "thank you for your application",
-    "thank you!",
     "candidature enregistrée",
 ]
 
@@ -1759,6 +1757,7 @@ async def find_submit_button(page: Page):
         "cookie", "refuser", "fermer", "close",
         "suivant", "next", "continue", "continuer", "précédent", "previous",
         "back", "retour", "review", "vérifier",
+        "site du recruteur", "site de l'entreprise", "site de l’entreprise", "sur le site",
     )
     for _, ctx in await get_form_roots(page):
         for sel in sub_selectors:
@@ -1813,6 +1812,8 @@ async def try_click_next_step(page: Page) -> bool:
         "button[aria-label*='Review' i]",
         "button:has-text('Save and Continue')",
         "button:has-text('Enregistrer et continuer')",
+        "button:has-text('Postuler sur le site')",
+        "a:has-text('Postuler sur le site')",
         "button:has-text('Suivant')",
         "a[role='button']:has-text('Suivant')",
         "button:has-text('Vérifier')",
