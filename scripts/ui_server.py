@@ -234,7 +234,7 @@ class StageHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def send_file(self, path: Path) -> None:
+    def send_file(self, path: Path, *, no_cache: bool = False) -> None:
         if not path.exists() or not path.is_file():
             self.send_error(404, "File not found")
             return
@@ -243,6 +243,8 @@ class StageHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype or "application/octet-stream")
         self.send_header("Content-Length", str(len(data)))
+        if no_cache or path.suffix.lower() in {".html", ".js", ".css"}:
+            self.send_header("Cache-Control", "no-store, max-age=0")
         self.end_headers()
         self.wfile.write(data)
 

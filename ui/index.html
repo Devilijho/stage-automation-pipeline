@@ -4,32 +4,63 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>StageBot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <aside>
   <div class="brand">StageBot</div>
   <div class="sub" id="sidebar-sub">Loading...</div>
-  <button class="nav-btn active" id="nav-guide" onclick="showTab('guide', this)"></button>
-  <button class="nav-btn" id="nav-fetch" onclick="showTab('fetch', this)"></button>
-  <button class="nav-btn" id="nav-apply" onclick="showTab('apply', this)"></button>
-  <button class="nav-btn" id="nav-tracker" onclick="showTab('tracker', this)"></button>
-  <button class="nav-btn" id="nav-preview" onclick="showTab('preview', this)"></button>
-  <button class="nav-btn" id="nav-profile" onclick="showTab('profile', this)"></button>
-  <button class="nav-btn" id="nav-questions" onclick="showTab('questions', this)"></button>
+
+  <button class="nav-btn active" id="nav-guide" onclick="showTab('guide', this)">
+    <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+    <span class="nav-label">1. Intro &amp; Guide</span>
+  </button>
+  <button class="nav-btn" id="nav-fetch" onclick="showTab('fetch', this)">
+    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <span class="nav-label">2. Fetch Offers</span>
+  </button>
+  <button class="nav-btn" id="nav-apply" onclick="showTab('apply', this)">
+    <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+    <span class="nav-label">3. Apply</span>
+  </button>
+  <button class="nav-btn" id="nav-tracker" onclick="showTab('tracker', this)">
+    <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+    <span class="nav-label">4. Applications</span>
+  </button>
+  <button class="nav-btn" id="nav-preview" onclick="showTab('preview', this)">
+    <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+    <span class="nav-label">5. CV &amp; Letter Preview</span>
+  </button>
+  <button class="nav-btn" id="nav-profile" onclick="showTab('profile', this)">
+    <svg viewBox="0 0 24 24"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+    <span class="nav-label">6. Profile &amp; GitHub</span>
+  </button>
+  <button class="nav-btn" id="nav-questions" onclick="showTab('questions', this)">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <span class="nav-label">7. Q&amp;A &amp; Rules</span>
+  </button>
+
   <div class="stats" id="stats-box">
-    <div><span id="lbl-total">Total</span>: <strong id="st-total">0</strong></div>
-    <div><span id="lbl-applied">Sent</span>: <strong id="st-applied">0</strong></div>
-    <div><span id="lbl-drafted">Drafts</span>: <strong id="st-drafted">0</strong></div>
-    <div><span id="lbl-manual">Portal</span>: <strong id="st-manual">0</strong></div>
-    <div><span id="lbl-login">Login</span>: <strong id="st-login">0</strong></div>
-    <div><span id="lbl-other">Closed</span>: <strong id="st-other">0</strong></div>
+    <div class="stats-dots">
+      <span></span><span></span><span></span>
+    </div>
+    <div class="stats-grid">
+      <div><span id="lbl-total">Total</span> <strong id="st-total">0</strong></div>
+      <div><span id="lbl-applied">Sent</span> <strong id="st-applied">0</strong></div>
+      <div><span id="lbl-drafted">Drafts</span> <strong id="st-drafted">0</strong></div>
+      <div><span id="lbl-manual">Portal</span> <strong id="st-manual">0</strong></div>
+      <div><span id="lbl-login">Login</span> <strong id="st-login">0</strong></div>
+      <div><span id="lbl-other">Closed</span> <strong id="st-other">0</strong></div>
+    </div>
   </div>
 </aside>
 
 <main>
   <header>
-    <div id="page-title" style="font-weight:600;"></div>
+    <div id="page-title"></div>
     <div class="row">
       <button class="pill debug-toggle" id="btn-debug-mode" onclick="toggleDebugMode()" title=""></button>
       <div class="lang-bar">
@@ -42,7 +73,255 @@
 
   <div class="content">
     <div id="debug-banner" class="debug-banner hidden"></div>
-    <!-- TRACKER TAB -->
+
+    <!-- 1. GUIDE / STARTING PAGE TAB -->
+    <section id="tab-guide">
+      <div class="guide-header">
+        <h3 id="g-title"></h3>
+        <p id="g-intro"></p>
+      </div>
+
+      <div class="stepper">
+        <!-- STEP 1 -->
+        <div class="step-row">
+          <div class="step-marker" onclick="this.classList.toggle('completed')" title="Mark complete">
+            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <div class="card step-card">
+            <span class="step-kicker">Step 1</span>
+            <h4 id="g-s1-t"></h4>
+            <p id="g-s1-d"></p>
+            <div class="row">
+              <button class="primary" onclick="runLogin(true)">
+                <span id="g-s1-btn"></span>
+                <svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              </button>
+              <span id="g-login-status" style="font-size:13px; color:var(--green); font-weight:500;"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- STEP 2 -->
+        <div class="step-row">
+          <div class="step-marker" onclick="this.classList.toggle('completed')" title="Mark complete">
+            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <div class="card step-card">
+            <span class="step-kicker">Step 2</span>
+            <h4 id="g-s2-t"></h4>
+            <p id="g-s2-d"></p>
+            <button class="secondary" id="g-s2-btn-wrap" onclick="runSync()">
+              <svg viewBox="0 0 24 24"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+              <span id="g-s2-btn"></span>
+            </button>
+          </div>
+        </div>
+
+        <!-- STEP 3 -->
+        <div class="step-row">
+          <div class="step-marker" onclick="this.classList.toggle('completed')" title="Mark complete">
+            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <div class="card step-card">
+            <span class="step-kicker">Step 3</span>
+            <h4 id="g-s2b-t">Set Preferences &amp; Upload CV</h4>
+            <p id="g-s2b-d">Add your resume and target roles so StageBot scores offers accurately.</p>
+            <div class="row" style="gap:12px;">
+              <button class="secondary" onclick="showTab('profile', document.getElementById('nav-profile'))">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                <span id="g-s2b-btn1">Open Preferences &amp; Profile</span>
+              </button>
+              <button class="secondary" onclick="document.getElementById('resume-pdf-input').click()">
+                <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span id="g-s2b-btn2">Import Resume (PDF)</span>
+              </button>
+              <span id="g-resume-status" style="font-size:13px; color:var(--green); font-weight:500;"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- STEP 4 -->
+        <div class="step-row">
+          <div class="step-marker" onclick="this.classList.toggle('completed')" title="Mark complete">
+            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <div class="card step-card">
+            <span class="step-kicker">Step 4</span>
+            <h4 id="g-s3-t"></h4>
+            <p id="g-s3-d"></p>
+            <button class="secondary" onclick="showTab('fetch', document.getElementById('nav-fetch'))">
+              <span id="g-s3-btn"></span>
+              <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- STEP 5 -->
+        <div class="step-row">
+          <div class="step-marker" onclick="this.classList.toggle('completed')" title="Mark complete">
+            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <div class="card step-card">
+            <span class="step-kicker">Step 5</span>
+            <h4 id="g-s4-t"></h4>
+            <p id="g-s4-d"></p>
+            <div class="row" style="gap:12px;">
+              <button class="secondary" onclick="showTab('tracker', document.getElementById('nav-tracker'))">
+                <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <span id="g-s4-btn"></span>
+              </button>
+              <a id="link-report-guide" href="/api/report" target="_blank" style="text-decoration:none;">
+                <button class="secondary">
+                  <svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                  <span id="g-s5-btn"></span>
+                </button>
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. FETCH OFFERS TAB -->
+    <section id="tab-fetch" class="hidden">
+      <div class="card">
+        <h3 id="fetch-heading" style="margin-top:0; margin-bottom:6px; font-size:18px;"></h3>
+        <p id="fetch-desc" style="font-size:13.5px; color:var(--muted); margin-top:0; margin-bottom:18px;"></p>
+        <div class="row" style="margin-bottom:14px;">
+          <input id="q-input" value="" style="flex:1; min-width:260px;">
+          <select id="q-limit" style="width:140px;">
+            <option value="5">5 offers</option>
+            <option value="10" selected>10 offers</option>
+            <option value="20">20 offers</option>
+            <option value="30">30 offers</option>
+            <option value="50">50 offers</option>
+            <option value="100">100 offers</option>
+          </select>
+        </div>
+        <div class="row" style="margin-bottom:16px;">
+          <div class="pill-group">
+            <button class="pill active" id="pill-li" onclick="this.classList.toggle('active')">LinkedIn (Easy Apply)</button>
+            <button class="pill" id="pill-hw" onclick="this.classList.toggle('active')">HelloWork</button>
+            <button class="pill" id="pill-wttj" onclick="this.classList.toggle('active')">Welcome to the Jungle</button>
+            <button class="pill" id="pill-jt" onclick="this.classList.toggle('active')">JobTeaser</button>
+            <button class="pill" id="pill-indeed" onclick="this.classList.toggle('active')">Indeed</button>
+            <button class="pill" id="pill-apec" onclick="this.classList.toggle('active')">APEC</button>
+            <button class="pill" id="pill-mj" onclick="this.classList.toggle('active')">Meteojob</button>
+          </div>
+        </div>
+        <div class="row" style="margin-bottom:20px; gap:10px;">
+          <span style="font-size:13px; color:var(--muted); font-weight:500;">Quality:</span>
+          <div class="pill-group" id="fetch-quality-group">
+            <button class="pill active" data-q="high" onclick="this.classList.toggle('active')">High</button>
+            <button class="pill active" data-q="medium" onclick="this.classList.toggle('active')">Medium</button>
+            <button class="pill active" data-q="low" onclick="this.classList.toggle('active')">Low</button>
+          </div>
+        </div>
+        <button class="primary" onclick="launchFetch()">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <span id="btn-fetch"></span>
+        </button>
+      </div>
+
+      <div class="card">
+        <div class="row" style="justify-content:space-between; margin-bottom:12px;">
+          <strong id="lbl-logs-fetch" style="font-size:15px;"></strong>
+          <div class="row">
+            <span id="run-state-fetch" style="font-size:12.5px; color:var(--muted);"></span>
+            <div class="lang-bar">
+              <button class="lang-btn active" id="lv-clean-fetch" onclick="setLogView('clean')">Clean</button>
+              <button class="lang-btn" id="lv-raw-fetch" onclick="setLogView('raw')">Raw</button>
+            </div>
+            <button class="secondary btn-sm" onclick="copyLogs(this)">Copy</button>
+            <button class="secondary btn-sm" onclick="stopTask()">Stop</button>
+          </div>
+        </div>
+        <div class="log-summary" id="log-summary-fetch"></div>
+        <div class="clean-log" id="clean-log-fetch"></div>
+        <pre class="log hidden" id="live-log-fetch"></pre>
+      </div>
+    </section>
+
+    <!-- 3. APPLY TAB -->
+    <section id="tab-apply" class="hidden">
+      <div class="card">
+        <div class="row" style="justify-content:space-between; margin-bottom:16px;">
+          <strong id="apply-mode-title" style="font-size:16px;"></strong>
+          <div class="pill-group">
+            <button class="pill active" id="mode-auto" onclick="setRunMode('auto')"><span id="lbl-m-auto"></span></button>
+            <button class="pill" id="mode-apply" onclick="setRunMode('apply')"><span id="lbl-m-apply"></span></button>
+            <button class="pill active" id="pill-skip" onclick="this.classList.toggle('active')"><span id="lbl-skip-ext"></span></button>
+          </div>
+        </div>
+        <div class="row" style="margin-bottom:14px; gap:10px;">
+          <span id="lbl-apply-platforms" style="font-size:13px; color:var(--muted); font-weight:500;">Platforms:</span>
+          <div class="pill-group" id="apply-sources-group">
+            <button class="pill active" data-src="linkedin" onclick="toggleApplySource(this)">LinkedIn</button>
+            <button class="pill active" data-src="hellowork" onclick="toggleApplySource(this)">HelloWork</button>
+            <button class="pill active" data-src="wttj" onclick="toggleApplySource(this)">WTTJ</button>
+            <button class="pill active" data-src="jobteaser" onclick="toggleApplySource(this)">JobTeaser</button>
+            <button class="pill active" data-src="indeed" onclick="toggleApplySource(this)">Indeed</button>
+            <button class="pill active" data-src="apec" onclick="toggleApplySource(this)">APEC</button>
+            <button class="pill active" data-src="meteojob" onclick="toggleApplySource(this)">Meteojob</button>
+          </div>
+          <button class="secondary btn-sm" onclick="toggleAllApplySources(true)">All</button>
+          <button class="secondary btn-sm" onclick="toggleAllApplySources(false)">None</button>
+        </div>
+        <div class="row" style="margin-bottom:18px; gap:10px;">
+          <span style="font-size:13px; color:var(--muted); font-weight:500;">Quality:</span>
+          <div class="pill-group" id="apply-quality-group">
+            <button class="pill active" data-q="high" onclick="toggleApplyQuality(this)">High</button>
+            <button class="pill active" data-q="medium" onclick="toggleApplyQuality(this)">Medium</button>
+            <button class="pill active" data-q="low" onclick="toggleApplyQuality(this)">Low</button>
+          </div>
+        </div>
+        <div class="row" style="gap:12px;">
+          <button class="primary" id="btn-retry-drafted" onclick="runRetry('drafted')"></button>
+          <button class="secondary" id="btn-retry-manual" onclick="runRetry('manual_portal')"></button>
+          <button class="secondary" id="btn-retry-login" onclick="runRetry('needs_login')"></button>
+          <button class="secondary" id="btn-mail" disabled style="opacity:0.45; cursor:not-allowed;"></button>
+        </div>
+        <div id="apply-hint" style="font-size:12.5px; color:var(--muted); margin-top:12px;"></div>
+      </div>
+
+      <div class="card hidden" id="manual-current-card" style="border-color: var(--accent);">
+        <div class="row" style="justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-size:11.5px; color:var(--accent-light); font-weight:700; text-transform:uppercase; letter-spacing:0.05em;" id="mc-progress">Semi-Automatic</div>
+            <div style="font-size:16px; font-weight:600; margin-top:4px; color:#fff;" id="mc-title">—</div>
+            <div style="font-size:13px; color:var(--green); margin-top:4px;" id="mc-status"></div>
+          </div>
+          <div class="row" style="gap:10px;">
+            <button class="secondary btn-sm" id="mc-btn-fill" onclick="manualAction('fill')" style="border-color:var(--accent); color:var(--accent-light);">Fill Current Page</button>
+            <button class="secondary btn-sm" id="mc-btn-preview" onclick="openManualPreview()">View CV &amp; LM</button>
+            <button class="secondary btn-sm" id="mc-btn-finder" onclick="manualAction('finder')">Open Finder</button>
+            <button class="primary btn-sm" id="mc-btn-applied" onclick="manualAction('applied')">Mark Applied</button>
+            <button class="secondary btn-sm" id="mc-btn-skip" onclick="manualAction('skip')" style="border-color:var(--amber); color:var(--amber);">Skip</button>
+            <button class="primary btn-sm hidden" id="mc-btn-next" onclick="manualAction('next')" style="background:#b47812;">Next Offer →</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row" style="justify-content:space-between; margin-bottom:12px;">
+          <strong id="lbl-logs-apply" style="font-size:15px;"></strong>
+          <div class="row">
+            <span id="run-state-apply" style="font-size:12.5px; color:var(--muted);"></span>
+            <div class="lang-bar">
+              <button class="lang-btn active" id="lv-clean-apply" onclick="setLogView('clean')">Clean</button>
+              <button class="lang-btn" id="lv-raw-apply" onclick="setLogView('raw')">Raw</button>
+            </div>
+            <button class="secondary btn-sm" onclick="copyLogs(this)">Copy</button>
+            <button class="secondary btn-sm" onclick="stopTask()">Stop</button>
+          </div>
+        </div>
+        <div class="log-summary" id="log-summary-apply"></div>
+        <div class="clean-log" id="clean-log-apply"></div>
+        <pre class="log hidden" id="live-log-apply"></pre>
+      </div>
+    </section>
+
+    <!-- 4. TRACKER / APPLICATIONS TAB -->
     <section id="tab-tracker" class="hidden">
       <div class="card row">
         <input id="filter-q" oninput="renderTable()" style="flex:1; min-width:220px;">
@@ -72,12 +351,12 @@
           <option value="medium">Medium</option>
           <option value="low">Low</option>
         </select>
-        <button class="secondary" id="btn-skip-filtered" onclick="skipFilteredRows()"></button>
-        <button class="secondary" id="btn-remake" onclick="remakeSelected()"></button>
-        <button class="secondary" id="btn-refresh" onclick="loadApps()"></button>
-        <a id="link-report-tracker" href="/api/report" target="_blank"><button class="secondary" id="btn-report"></button></a>
+        <button class="secondary btn-sm" id="btn-skip-filtered" onclick="skipFilteredRows()"></button>
+        <button class="secondary btn-sm" id="btn-remake" onclick="remakeSelected()"></button>
+        <button class="secondary btn-sm" id="btn-refresh" onclick="loadApps()"></button>
+        <a id="link-report-tracker" href="/api/report" target="_blank" style="text-decoration:none;"><button class="secondary btn-sm" id="btn-report"></button></a>
       </div>
-      <div class="card" style="padding: 8px 16px; overflow-x: auto;">
+      <div class="card" style="padding: 12px 20px; overflow-x: auto;">
         <table>
           <thead>
             <tr>
@@ -98,145 +377,10 @@
       </div>
     </section>
 
-    <!-- 2. FETCH OFFERS TAB -->
-    <section id="tab-fetch" class="hidden">
-      <div class="card">
-        <h3 id="fetch-heading" style="margin-top:0; margin-bottom:6px;"></h3>
-        <p id="fetch-desc" style="font-size:12px; color:var(--muted); margin-top:0; margin-bottom:14px;"></p>
-        <div class="row" style="margin-bottom:12px;">
-          <input id="q-input" value="" style="flex:1;">
-          <select id="q-limit" style="width:120px;">
-            <option value="5">5 offers</option>
-            <option value="10" selected>10 offers</option>
-            <option value="20">20 offers</option>
-            <option value="30">30 offers</option>
-            <option value="50">50 offers</option>
-            <option value="100">100 offers</option>
-          </select>
-        </div>
-        <div class="row" style="margin-bottom:14px;">
-          <div class="pill-group" style="flex-wrap:wrap;">
-            <button class="pill active" id="pill-li" onclick="this.classList.toggle('active')">LinkedIn (Easy Apply)</button>
-            <button class="pill" id="pill-hw" onclick="this.classList.toggle('active')">HelloWork</button>
-            <button class="pill" id="pill-wttj" onclick="this.classList.toggle('active')">Welcome to the Jungle</button>
-            <button class="pill" id="pill-jt" onclick="this.classList.toggle('active')">JobTeaser</button>
-            <button class="pill" id="pill-indeed" onclick="this.classList.toggle('active')">Indeed</button>
-            <button class="pill" id="pill-apec" onclick="this.classList.toggle('active')">APEC</button>
-            <button class="pill" id="pill-mj" onclick="this.classList.toggle('active')">Meteojob</button>
-          </div>
-        </div>
-        <div class="row" style="margin-bottom:14px; gap:8px;">
-          <span style="font-size:12px; color:var(--muted);">Quality:</span>
-          <div class="pill-group" id="fetch-quality-group">
-            <button class="pill active" data-q="high" onclick="this.classList.toggle('active')">High</button>
-            <button class="pill active" data-q="medium" onclick="this.classList.toggle('active')">Medium</button>
-            <button class="pill active" data-q="low" onclick="this.classList.toggle('active')">Low</button>
-          </div>
-        </div>
-        <button class="primary" id="btn-fetch" onclick="launchFetch()"></button>
-      </div>
-      <div class="card">
-        <div class="row" style="justify-content:space-between; margin-bottom:8px;">
-          <strong id="lbl-logs-fetch"></strong>
-          <div class="row">
-            <span id="run-state-fetch" style="font-size:12px; color:var(--muted);"></span>
-            <div class="lang-bar">
-              <button class="lang-btn active" id="lv-clean-fetch" onclick="setLogView('clean')">Clean</button>
-              <button class="lang-btn" id="lv-raw-fetch" onclick="setLogView('raw')">Raw</button>
-            </div>
-            <button class="secondary" onclick="copyLogs(this)" style="padding:4px 10px; font-size:12px;">Copy</button>
-            <button class="secondary" onclick="stopTask()" style="padding:4px 10px; font-size:12px;">Stop</button>
-          </div>
-        </div>
-        <div class="log-summary" id="log-summary-fetch"></div>
-        <div class="clean-log" id="clean-log-fetch"></div>
-        <pre class="log hidden" id="live-log-fetch"></pre>
-      </div>
-    </section>
-
-    <!-- 3. APPLY TAB -->
-    <section id="tab-apply" class="hidden">
-      <div class="card">
-        <div class="row" style="justify-content:space-between; margin-bottom:12px;">
-          <strong id="apply-mode-title"></strong>
-          <div class="pill-group">
-            <button class="pill active" id="mode-auto" onclick="setRunMode('auto')"><span id="lbl-m-auto"></span></button>
-            <button class="pill" id="mode-apply" onclick="setRunMode('apply')"><span id="lbl-m-apply"></span></button>
-            <button class="pill active" id="pill-skip" onclick="this.classList.toggle('active')"><span id="lbl-skip-ext"></span></button>
-          </div>
-        </div>
-        <div class="row" style="margin-bottom:12px; gap:8px;">
-          <span id="lbl-apply-platforms" style="font-size:12px; color:var(--muted);">Platforms:</span>
-          <div class="pill-group" id="apply-sources-group">
-            <button class="pill active" data-src="linkedin" onclick="toggleApplySource(this)">LinkedIn</button>
-            <button class="pill active" data-src="hellowork" onclick="toggleApplySource(this)">HelloWork</button>
-            <button class="pill active" data-src="wttj" onclick="toggleApplySource(this)">WTTJ</button>
-            <button class="pill active" data-src="jobteaser" onclick="toggleApplySource(this)">JobTeaser</button>
-            <button class="pill active" data-src="indeed" onclick="toggleApplySource(this)">Indeed</button>
-            <button class="pill active" data-src="apec" onclick="toggleApplySource(this)">APEC</button>
-            <button class="pill active" data-src="meteojob" onclick="toggleApplySource(this)">Meteojob</button>
-          </div>
-          <button class="secondary" onclick="toggleAllApplySources(true)" style="padding:4px 9px; font-size:11px;">All</button>
-          <button class="secondary" onclick="toggleAllApplySources(false)" style="padding:4px 9px; font-size:11px;">None</button>
-        </div>
-        <div class="row" style="margin-bottom:12px; gap:8px;">
-          <span style="font-size:12px; color:var(--muted);">Quality:</span>
-          <div class="pill-group" id="apply-quality-group">
-            <button class="pill active" data-q="high" onclick="toggleApplyQuality(this)">High</button>
-            <button class="pill active" data-q="medium" onclick="toggleApplyQuality(this)">Medium</button>
-            <button class="pill active" data-q="low" onclick="toggleApplyQuality(this)">Low</button>
-          </div>
-        </div>
-        <div class="row" style="gap:10px;">
-          <button class="primary" id="btn-retry-drafted" onclick="runRetry('drafted')"></button>
-          <button class="secondary" id="btn-retry-manual" onclick="runRetry('manual_portal')"></button>
-          <button class="secondary" id="btn-retry-login" onclick="runRetry('needs_login')"></button>
-          <button class="secondary" id="btn-mail" disabled style="opacity:0.45; cursor:not-allowed;"></button>
-        </div>
-        <div id="apply-hint" style="font-size:12px; color:var(--muted); margin-top:10px;"></div>
-      </div>
-
-      <div class="card hidden" id="manual-current-card" style="border-color: var(--accent);">
-        <div class="row" style="justify-content:space-between; align-items:center;">
-          <div>
-            <div style="font-size:11px; color:var(--accent); font-weight:700; text-transform:uppercase;" id="mc-progress">Semi-Automatic</div>
-            <div style="font-size:15px; font-weight:600; margin-top:2px;" id="mc-title">—</div>
-            <div style="font-size:12px; color:var(--accent); margin-top:3px;" id="mc-status"></div>
-          </div>
-          <div class="row" style="gap:8px;">
-            <button class="secondary" id="mc-btn-fill" onclick="manualAction('fill')" style="border-color:var(--accent); color:var(--accent);">Fill Current Page</button>
-            <button class="secondary" id="mc-btn-preview" onclick="openManualPreview()">View CV &amp; LM</button>
-            <button class="secondary" id="mc-btn-finder" onclick="manualAction('finder')">Open Finder</button>
-            <button class="primary" id="mc-btn-applied" onclick="manualAction('applied')">Mark Applied</button>
-            <button class="secondary" id="mc-btn-skip" onclick="manualAction('skip')" style="border-color:var(--amber); color:var(--amber);">Skip</button>
-            <button class="primary hidden" id="mc-btn-next" onclick="manualAction('next')" style="background:#b47812;">Next Offer →</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="row" style="justify-content:space-between; margin-bottom:8px;">
-          <strong id="lbl-logs-apply"></strong>
-          <div class="row">
-            <span id="run-state-apply" style="font-size:12px; color:var(--muted);"></span>
-            <div class="lang-bar">
-              <button class="lang-btn active" id="lv-clean-apply" onclick="setLogView('clean')">Clean</button>
-              <button class="lang-btn" id="lv-raw-apply" onclick="setLogView('raw')">Raw</button>
-            </div>
-            <button class="secondary" onclick="copyLogs(this)" style="padding:4px 10px; font-size:12px;">Copy</button>
-            <button class="secondary" onclick="stopTask()" style="padding:4px 10px; font-size:12px;">Stop</button>
-          </div>
-        </div>
-        <div class="log-summary" id="log-summary-apply"></div>
-        <div class="clean-log" id="clean-log-apply"></div>
-        <pre class="log hidden" id="live-log-apply"></pre>
-      </div>
-    </section>
-
-    <!-- PREVIEW TAB -->
+    <!-- 5. PREVIEW TAB -->
     <section id="tab-preview" class="hidden">
       <div class="card row" style="justify-content:space-between;">
-        <div id="preview-label" style="font-weight:600;"></div>
+        <div id="preview-label" style="font-weight:600; font-size:15px;"></div>
       </div>
       <div class="pdf-grid">
         <iframe class="pdf" id="pdf-cv"></iframe>
@@ -244,47 +388,53 @@
       </div>
     </section>
 
-    <!-- PROFILE TAB -->
+    <!-- 6. PROFILE TAB -->
     <section id="tab-profile" class="hidden">
       <div class="card">
-        <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+        <div class="row" style="justify-content:space-between; margin-bottom:14px;">
           <div>
-            <strong>Search &amp; Quality Preferences</strong>
-            <span style="font-size:12px; color:var(--muted); margin-left:8px;">(config/profile.json → search &amp; preferences)</span>
+            <strong style="font-size:16px;">Search &amp; Quality Preferences</strong>
+            <span style="font-size:12.5px; color:var(--muted); margin-left:8px;">(config/profile.json &rarr; search &amp; preferences)</span>
           </div>
-          <div class="row" style="gap:8px;">
+          <div class="row" style="gap:10px;">
             <input type="file" id="resume-pdf-input" accept=".pdf" class="hidden" onchange="importResumePdf(this)">
-            <button class="secondary" onclick="document.getElementById('resume-pdf-input').click()">Import from Resume (PDF)</button>
+            <button class="secondary" onclick="document.getElementById('resume-pdf-input').click()">
+              <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Import from Resume (PDF)
+            </button>
             <button class="primary" onclick="savePreferences()">Save &amp; Reclassify</button>
           </div>
         </div>
-        <div id="pref-save-status" style="font-size:12px; color:var(--accent); margin-bottom:8px;"></div>
-        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:10px;">
-          <div><div style="font-size:11px; color:var(--muted); margin-bottom:4px;">Search Queries (comma-separated)</div><input id="pref-queries" style="width:100%;"></div>
-          <div><div style="font-size:11px; color:var(--muted); margin-bottom:4px;">Target Roles (+30)</div><input id="pref-target-roles" style="width:100%;"></div>
-          <div><div style="font-size:11px; color:var(--muted); margin-bottom:4px;">Avoid Roles (-40)</div><input id="pref-avoid-roles" style="width:100%;"></div>
-          <div><div style="font-size:11px; color:var(--muted); margin-bottom:4px;">Preferred Close Locations (+25)</div><input id="pref-pref-locs" style="width:100%;"></div>
-          <div><div style="font-size:11px; color:var(--muted); margin-bottom:4px;">IDF Locations (+12)</div><input id="pref-idf-locs" style="width:100%;"></div>
-          <div><div style="font-size:11px; color:var(--muted); margin-bottom:4px;">Work Types / Remote / Hybrid (+15)</div><input id="pref-work-types" style="width:100%;"></div>
-          <div><div style="font-size:11px; color:var(--muted); margin-bottom:4px;">Avoid Far Locations (-30)</div><input id="pref-avoid-locs" style="width:100%;"></div>
+        <div id="pref-save-status" style="font-size:13px; color:var(--green); font-weight:500; margin-bottom:10px;"></div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:14px;">
+          <div><div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Search Queries (comma-separated)</div><input id="pref-queries" style="width:100%;"></div>
+          <div><div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Target Roles (+30)</div><input id="pref-target-roles" style="width:100%;"></div>
+          <div><div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Avoid Roles (-40)</div><input id="pref-avoid-roles" style="width:100%;"></div>
+          <div><div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Preferred Close Locations (+25)</div><input id="pref-pref-locs" style="width:100%;"></div>
+          <div><div style="font-size:12px; color:var(--muted); margin-bottom:5px;">IDF Locations (+12)</div><input id="pref-idf-locs" style="width:100%;"></div>
+          <div><div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Work Types / Remote / Hybrid (+15)</div><input id="pref-work-types" style="width:100%;"></div>
+          <div><div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Avoid Far Locations (-30)</div><input id="pref-avoid-locs" style="width:100%;"></div>
         </div>
       </div>
       <div class="card row" style="justify-content:space-between;">
-        <div><strong id="lbl-master"></strong></div>
-        <button class="primary" id="btn-sync" onclick="runSync()"></button>
+        <div><strong id="lbl-master" style="font-size:16px;"></strong></div>
+        <button class="primary" onclick="runSync()">
+          <svg viewBox="0 0 24 24"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+          <span id="btn-sync"></span>
+        </button>
       </div>
       <div class="card">
         <pre class="log" id="master-md" style="height:48vh;"></pre>
       </div>
     </section>
 
-    <!-- Q&A & RULES TAB -->
+    <!-- 7. Q&A & RULES TAB -->
     <section id="tab-questions" class="hidden">
       <div class="card">
-        <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+        <div class="row" style="justify-content:space-between; margin-bottom:12px;">
           <div>
-            <strong>Unanswered Questions</strong>
-            <span style="font-size:12px; color:var(--muted); margin-left:8px;">(data/unanswered_questions.json)</span>
+            <strong style="font-size:16px;">Unanswered Questions</strong>
+            <span style="font-size:12.5px; color:var(--muted); margin-left:8px;">(data/unanswered_questions.json)</span>
           </div>
           <div class="row">
             <select id="qa-filter" onchange="renderUnanswered()">
@@ -292,10 +442,10 @@
               <option value="missing">Missing answer</option>
               <option value="answered">Answered</option>
             </select>
-            <button class="primary" onclick="saveUnansweredQuestions()">Save Answers</button>
+            <button class="primary btn-sm" onclick="saveUnansweredQuestions()">Save Answers</button>
           </div>
         </div>
-        <div id="qa-save-status" style="font-size:12px; color:var(--accent); margin-bottom:8px;"></div>
+        <div id="qa-save-status" style="font-size:13px; color:var(--green); margin-bottom:10px;"></div>
         <table>
           <thead><tr><th>Type</th><th>Question</th><th>Options</th><th>Company</th><th>Answer</th></tr></thead>
           <tbody id="qa-unanswered-tbody"></tbody>
@@ -303,26 +453,26 @@
       </div>
 
       <div class="card">
-        <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+        <div class="row" style="justify-content:space-between; margin-bottom:12px;">
           <div>
-            <strong>Auto-Filled Profile Answers</strong>
-            <span style="font-size:12px; color:var(--muted); margin-left:8px;">(config/profile.json → form_answers)</span>
+            <strong style="font-size:16px;">Auto-Filled Profile Answers</strong>
+            <span style="font-size:12.5px; color:var(--muted); margin-left:8px;">(config/profile.json &rarr; form_answers)</span>
           </div>
-          <button class="primary" onclick="saveFormAnswers()">Save Profile Answers</button>
+          <button class="primary btn-sm" onclick="saveFormAnswers()">Save Profile Answers</button>
         </div>
-        <div id="fa-save-status" style="font-size:12px; color:var(--accent); margin-bottom:8px;"></div>
-        <div id="qa-form-answers-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:10px;"></div>
+        <div id="fa-save-status" style="font-size:13px; color:var(--green); margin-bottom:10px;"></div>
+        <div id="qa-form-answers-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:12px;"></div>
       </div>
 
       <div class="card">
-        <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+        <div class="row" style="justify-content:space-between; margin-bottom:12px;">
           <div>
-            <strong>Cached LLM Answers</strong>
-            <span style="font-size:12px; color:var(--muted); margin-left:8px;">(data/llm_answer_cache.json)</span>
+            <strong style="font-size:16px;">Cached LLM Answers</strong>
+            <span style="font-size:12.5px; color:var(--muted); margin-left:8px;">(data/llm_answer_cache.json)</span>
           </div>
-          <button class="secondary" onclick="loadLlmCache()">Refresh Cache</button>
+          <button class="secondary btn-sm" onclick="loadLlmCache()">Refresh Cache</button>
         </div>
-        <div id="llm-cache-status" style="font-size:12px; color:var(--accent); margin-bottom:8px;"></div>
+        <div id="llm-cache-status" style="font-size:13px; color:var(--green); margin-bottom:10px;"></div>
         <table>
           <thead><tr><th style="width:80px;">Type</th><th>Question</th><th>Cached Answer</th><th style="width:180px;">Actions</th></tr></thead>
           <tbody id="qa-llm-cache-tbody"></tbody>
@@ -330,17 +480,17 @@
       </div>
 
       <div class="card">
-        <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+        <div class="row" style="justify-content:space-between; margin-bottom:12px;">
           <div>
-            <strong>Custom Keyword Rules</strong>
-            <span style="font-size:12px; color:var(--muted); margin-left:8px;">(config/profile.json → custom_rules)</span>
+            <strong style="font-size:16px;">Custom Keyword Rules</strong>
+            <span style="font-size:12.5px; color:var(--muted); margin-left:8px;">(config/profile.json &rarr; custom_rules)</span>
           </div>
           <div class="row">
-            <button class="secondary" onclick="addCustomRule()">+ Add Rule</button>
-            <button class="primary" onclick="saveCustomRules()">Save Rules</button>
+            <button class="secondary btn-sm" onclick="addCustomRule()">+ Add Rule</button>
+            <button class="primary btn-sm" onclick="saveCustomRules()">Save Rules</button>
           </div>
         </div>
-        <div id="cr-save-status" style="font-size:12px; color:var(--accent); margin-bottom:8px;"></div>
+        <div id="cr-save-status" style="font-size:13px; color:var(--green); margin-bottom:10px;"></div>
         <table>
           <thead><tr><th>Keyword (substring match)</th><th>Answer</th><th style="width:60px;"></th></tr></thead>
           <tbody id="qa-custom-rules-tbody"></tbody>
@@ -348,57 +498,12 @@
       </div>
 
       <div class="card">
-        <strong style="display:block; margin-bottom:10px;">Built-in Playwright Rules &amp; Verified Skills (master_profile.md)</strong>
+        <strong style="display:block; margin-bottom:12px; font-size:16px;">Built-in Playwright Rules &amp; Verified Skills (master_profile.md)</strong>
         <table>
           <thead><tr><th>Outcome</th><th>Rule / Trigger</th></tr></thead>
           <tbody id="qa-rules-tbody"></tbody>
         </table>
-        <div id="qa-skills-list" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:12px;"></div>
-      </div>
-    </section>
-
-    <!-- GUIDE / TUTORIAL TAB -->
-    <section id="tab-guide">
-      <div class="card">
-        <h3 id="g-title" style="margin-top:0;"></h3>
-        <p id="g-intro" style="color:var(--muted); margin-bottom:0;"></p>
-      </div>
-      <div class="card">
-        <h4 id="g-s1-t" style="margin-top:0;"></h4>
-        <p id="g-s1-d" style="color:var(--muted);"></p>
-        <div class="row">
-          <button class="primary" id="g-s1-btn" onclick="runLogin(true)"></button>
-          <span id="g-login-status" style="font-size:12px; color:var(--accent);"></span>
-        </div>
-      </div>
-      <div class="card">
-        <h4 id="g-s2-t" style="margin-top:0;"></h4>
-        <p id="g-s2-d" style="color:var(--muted);"></p>
-        <button class="secondary" id="g-s2-btn" onclick="runSync()"></button>
-      </div>
-      <div class="card">
-        <h4 id="g-s2b-t" style="margin-top:0;">Step 3 — Set Profile, Preferences &amp; Quality Rules</h4>
-        <p id="g-s2b-d" style="color:var(--muted);">Auto-fill your profile from a Resume PDF (or edit target roles, close locations, remote/hybrid &amp; avoid lists in Profile &amp; GitHub) so StageBot scores offers into High / Medium / Low.</p>
-        <div class="row" style="gap:8px;">
-          <button class="secondary" onclick="showTab('profile', document.getElementById('nav-profile'))">Open Preferences &amp; Profile</button>
-          <button class="secondary" onclick="document.getElementById('resume-pdf-input').click()">Import Resume (PDF)</button>
-          <span id="g-resume-status" style="font-size:12px; color:var(--accent);"></span>
-        </div>
-      </div>
-      <div class="card">
-        <h4 id="g-s3-t" style="margin-top:0;"></h4>
-        <p id="g-s3-d" style="color:var(--muted);"></p>
-        <button class="secondary" id="g-s3-btn" onclick="showTab('fetch', document.getElementById('nav-fetch'))"></button>
-      </div>
-      <div class="card">
-        <h4 id="g-s4-t" style="margin-top:0;"></h4>
-        <p id="g-s4-d" style="color:var(--muted);"></p>
-        <button class="secondary" id="g-s4-btn" onclick="showTab('tracker', document.getElementById('nav-tracker'))"></button>
-      </div>
-      <div class="card">
-        <h4 id="g-s5-t" style="margin-top:0;"></h4>
-        <p id="g-s5-d" style="color:var(--muted);"></p>
-        <a id="link-report-guide" href="/api/report" target="_blank"><button class="secondary" id="g-s5-btn"></button></a>
+        <div id="qa-skills-list" style="display:flex; flex-wrap:wrap; gap:8px; margin-top:14px;"></div>
       </div>
     </section>
   </div>

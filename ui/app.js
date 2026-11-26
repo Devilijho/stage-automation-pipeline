@@ -49,12 +49,13 @@ function updateDebugUI() {
     remakeBtn.disabled = debugMode;
     remakeBtn.style.opacity = debugMode ? '0.45' : '1';
   }
-  const syncBtn = document.getElementById('btn-sync');
+  const syncEl = document.getElementById('btn-sync');
+  const syncBtn = syncEl ? (syncEl.closest('button') || syncEl) : null;
   if (syncBtn) {
     syncBtn.disabled = debugMode;
     syncBtn.style.opacity = debugMode ? '0.45' : '1';
   }
-  const gSyncBtn = document.getElementById('g-s2-btn');
+  const gSyncBtn = document.getElementById('g-s2-btn-wrap');
   if (gSyncBtn) {
     gSyncBtn.disabled = debugMode;
     gSyncBtn.style.opacity = debugMode ? '0.45' : '1';
@@ -94,74 +95,89 @@ function setLang(lang) {
   currentLang = I18N[lang] ? lang : 'fr';
   localStorage.setItem('stagebot_lang', currentLang);
   document.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('lang-' + currentLang).classList.add('active');
+  document.getElementById('lang-' + currentLang)?.classList.add('active');
   const t = I18N[currentLang];
-  document.getElementById('nav-guide').textContent = t.navGuide;
-  document.getElementById('nav-fetch').textContent = t.navFetch;
-  document.getElementById('nav-apply').textContent = t.navApply;
-  document.getElementById('nav-tracker').textContent = t.navTracker;
-  document.getElementById('nav-preview').textContent = t.navPreview;
-  document.getElementById('nav-profile').textContent = t.navProfile;
-  document.getElementById('nav-questions').textContent = t.titles.questions;
-  document.getElementById('lbl-total').textContent = t.total;
-  document.getElementById('lbl-applied').textContent = t.applied;
-  document.getElementById('lbl-drafted').textContent = t.drafted;
-  document.getElementById('lbl-manual').textContent = t.manual;
-  document.getElementById('lbl-login').textContent = t.needsLogin;
-  document.getElementById('lbl-other').textContent = t.other;
-  document.getElementById('btn-report').textContent = t.report;
-  document.getElementById('btn-refresh').textContent = t.refresh;
-  document.getElementById('filter-q').placeholder = t.filterPlaceholder;
-  document.getElementById('opt-all').textContent = t.allStatuses;
-  document.getElementById('opt-all-src').textContent = t.allSources;
-  document.getElementById('btn-skip-filtered').textContent = t.skipFiltered;
+  const setText = (id, text) => {
+    const el = document.getElementById(id);
+    if (el && text !== undefined) el.textContent = text;
+  };
+  const setNavLabel = (id, text) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const lbl = el.querySelector('.nav-label');
+    if (lbl) lbl.textContent = text; else el.textContent = text;
+  };
+  setNavLabel('nav-guide', t.navGuide);
+  setNavLabel('nav-fetch', t.navFetch);
+  setNavLabel('nav-apply', t.navApply);
+  setNavLabel('nav-tracker', t.navTracker);
+  setNavLabel('nav-preview', t.navPreview);
+  setNavLabel('nav-profile', t.navProfile);
+  setNavLabel('nav-questions', t.titles.questions);
+  setText('lbl-total', t.total);
+  setText('lbl-applied', t.applied);
+  setText('lbl-drafted', t.drafted);
+  setText('lbl-manual', t.manual);
+  setText('lbl-login', t.needsLogin);
+  setText('lbl-other', t.other);
+  setText('btn-report', t.report);
+  setText('btn-refresh', t.refresh);
+  const filterQ = document.getElementById('filter-q');
+  if (filterQ) filterQ.placeholder = t.filterPlaceholder;
+  setText('opt-all', t.allStatuses);
+  setText('opt-all-src', t.allSources);
+  setText('btn-skip-filtered', t.skipFiltered);
   updateRemakeButton();
-  document.getElementById('th-date').textContent = t.thDate;
-  document.getElementById('th-source').textContent = t.thSource;
-  document.getElementById('th-company').textContent = t.thCompany;
-  document.getElementById('th-role').textContent = t.thRole;
-  document.getElementById('th-status').textContent = t.thStatus;
-  document.getElementById('th-notes').textContent = t.thNotes;
-  document.getElementById('th-docs').textContent = t.thDocs;
-  document.getElementById('th-actions').textContent = t.thActions;
-  document.getElementById('fetch-heading').textContent = t.fetchHeading;
-  document.getElementById('fetch-desc').textContent = t.fetchDesc;
-  document.getElementById('btn-fetch').textContent = t.btnFetch;
-  document.getElementById('apply-mode-title').textContent = t.applyModeTitle;
-  document.getElementById('lbl-skip-ext').textContent = t.skipExternal;
-  document.getElementById('lbl-m-auto').textContent = t.mAuto;
-  document.getElementById('lbl-m-apply').textContent = t.mApply;
-  document.getElementById('btn-mail').textContent = t.btnMail;
-  document.getElementById('lbl-apply-platforms').textContent = t.platforms;
+  setText('th-date', t.thDate);
+  setText('th-source', t.thSource);
+  setText('th-company', t.thCompany);
+  setText('th-role', t.thRole);
+  setText('th-status', t.thStatus);
+  setText('th-notes', t.thNotes);
+  setText('th-docs', t.thDocs);
+  setText('th-actions', t.thActions);
+  setText('fetch-heading', t.fetchHeading);
+  setText('fetch-desc', t.fetchDesc);
+  setText('btn-fetch', t.btnFetch);
+  setText('apply-mode-title', t.applyModeTitle);
+  setText('lbl-skip-ext', t.skipExternal);
+  setText('lbl-m-auto', t.mAuto);
+  setText('lbl-m-apply', t.mApply);
+  setText('btn-mail', t.btnMail);
+  setText('lbl-apply-platforms', t.platforms);
   updateApplyButtonCounts();
   updateDebugUI();
-  document.getElementById('lbl-logs-fetch').textContent = t.logs;
-  document.getElementById('lbl-logs-apply').textContent = t.logs;
-  document.getElementById('run-state-fetch').textContent = t.idle;
-  document.getElementById('run-state-apply').textContent = t.idle;
-  if (!document.getElementById('pdf-cv').src) {
-    document.getElementById('preview-label').textContent = t.previewEmpty;
+  setText('lbl-logs-fetch', t.logs);
+  setText('lbl-logs-apply', t.logs);
+  setText('run-state-fetch', t.idle);
+  setText('run-state-apply', t.idle);
+  if (!document.getElementById('pdf-cv')?.src) {
+    setText('preview-label', t.previewEmpty);
   }
-  document.getElementById('lbl-master').textContent = t.masterTitle;
-  document.getElementById('btn-sync').textContent = t.syncBtn;
-  document.getElementById('g-title').textContent = t.gTitle;
-  document.getElementById('g-intro').textContent = t.gIntro;
-  document.getElementById('g-s1-t').textContent = t.gS1T;
-  document.getElementById('g-s1-d').textContent = t.gS1D;
-  document.getElementById('g-s1-btn').textContent = t.gS1Btn;
-  document.getElementById('g-s2-t').textContent = t.gS2T;
-  document.getElementById('g-s2-d').textContent = t.gS2D;
-  document.getElementById('g-s2-btn').textContent = t.gS2Btn;
-  document.getElementById('g-s3-t').textContent = t.gS3T;
-  document.getElementById('g-s3-d').textContent = t.gS3D;
-  document.getElementById('g-s3-btn').textContent = t.gS3Btn;
-  document.getElementById('g-s4-t').textContent = t.gS4T;
-  document.getElementById('g-s4-d').textContent = t.gS4D;
-  document.getElementById('g-s4-btn').textContent = t.gS4Btn;
-  document.getElementById('g-s5-t').textContent = t.gS5T;
-  document.getElementById('g-s5-d').textContent = t.gS5D;
-  document.getElementById('g-s5-btn').textContent = t.gS5Btn;
-  document.getElementById('page-title').textContent = t.titles[currentTab] || 'StageBot';
+  setText('lbl-master', t.masterTitle);
+  setText('btn-sync', t.syncBtn);
+  setText('g-title', t.gTitle);
+  setText('g-intro', t.gIntro);
+  setText('g-s1-t', t.gS1T);
+  setText('g-s1-d', t.gS1D);
+  setText('g-s1-btn', t.gS1Btn);
+  setText('g-s2-t', t.gS2T);
+  setText('g-s2-d', t.gS2D);
+  setText('g-s2-btn', t.gS2Btn);
+  setText('g-s2b-t', t.gS2bT);
+  setText('g-s2b-d', t.gS2bD);
+  setText('g-s2b-btn1', t.gS2bBtn1);
+  setText('g-s2b-btn2', t.gS2bBtn2);
+  setText('g-s3-t', t.gS3T);
+  setText('g-s3-d', t.gS3D);
+  setText('g-s3-btn', t.gS3Btn);
+  setText('g-s4-t', t.gS4T);
+  setText('g-s4-d', t.gS4D);
+  setText('g-s4-btn', t.gS4Btn);
+  setText('g-s5-t', t.gS5T);
+  setText('g-s5-d', t.gS5D);
+  setText('g-s5-btn', t.gS5Btn);
+  setText('page-title', t.titles[currentTab] || 'StageBot');
   renderTable();
 }
 
@@ -243,8 +259,8 @@ function renderTable() {
         </select>
       </td>
       <td>${noteCell}</td>
-      <td><button class="secondary" onclick="previewDocs('${encodeURIComponent(r.Company || '')}','${encodeURIComponent(r.CV_PDF || '')}','${encodeURIComponent(r.LM_PDF || '')}')">${t.viewPdf}</button></td>
-      <td><button class="secondary" onclick="openInChrome('${encodeURIComponent(r.CV_PDF || '')}','${encodeURIComponent(r.URL || '')}')">${t.applyBtn}</button></td>
+      <td><button class="secondary btn-sm" onclick="previewDocs('${encodeURIComponent(r.Company || '')}','${encodeURIComponent(r.CV_PDF || '')}','${encodeURIComponent(r.LM_PDF || '')}')">${t.viewPdf}</button></td>
+      <td><button class="secondary btn-sm" onclick="openInChrome('${encodeURIComponent(r.CV_PDF || '')}','${encodeURIComponent(r.URL || '')}')">${t.applyBtn}</button></td>
     `;
     tbody.appendChild(tr);
   }
@@ -726,3 +742,12 @@ async function savePreferences() {
   await loadProfile();
   await loadApps();
 }
+
+// Interactive cursor spotlight glow on all cards
+document.addEventListener('mousemove', (e) => {
+  const card = e.target.closest('.card');
+  if (!card) return;
+  const rect = card.getBoundingClientRect();
+  card.style.setProperty('--mouse-x', `${e.clientX - rect.left}px`);
+  card.style.setProperty('--mouse-y', `${e.clientY - rect.top}px`);
+});

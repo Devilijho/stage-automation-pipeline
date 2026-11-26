@@ -373,8 +373,24 @@ function renderLlmCache() {
   });
 }
 
-setLang(currentLang);
-setLogView(logViewMode);
-loadApps();
-loadProfile();
-loadQuestions();
+function initStageBotUI() {
+  try {
+    setLang(currentLang);
+  } catch (e) {
+    console.error('setLang init error:', e);
+  }
+  try {
+    setLogView(logViewMode);
+  } catch (e) {
+    console.error('setLogView init error:', e);
+  }
+  loadApps().catch(e => console.error('loadApps init error:', e));
+  loadProfile().catch(e => console.error('loadProfile init error:', e));
+  loadQuestions().catch(e => console.error('loadQuestions init error:', e));
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initStageBotUI);
+} else {
+  initStageBotUI();
+}

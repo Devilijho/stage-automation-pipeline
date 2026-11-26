@@ -128,6 +128,7 @@ class HtmlFixturesAndCoreTests(unittest.TestCase):
                     for static_path in ("/", "/styles.css", "/i18n.js", "/app.js", "/qa.js"):
                         with urllib.request.urlopen(f"http://127.0.0.1:{port}{static_path}", timeout=5) as r:
                             self.assertEqual(r.status, 200)
+                            self.assertIn("no-store", r.headers.get("Cache-Control", ""))
                             self.assertGreater(len(r.read()), 50)
 
                     fill_path = Path(tmp) / ".manual_fill"
