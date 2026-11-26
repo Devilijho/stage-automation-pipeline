@@ -20,10 +20,12 @@ cv-proyect/
 │   └── base_lm.tex        # Base 1-page LaTeX Lettre de Motivation template (Vous / Moi / Nous)
 ├── scripts/
 │   ├── core/              # Shared core package (config/profile I/O, locked atomic CSV storage, Chrome session, LLM cache)
+│   ├── scrapers/          # Job board scrapers, HTTP/Playwright pools, HTML parsers, and BUT 2/3 offer scoring
+│   ├── browser/           # Playwright form automation (ATS detection, question rules, DOM helpers, navigation, runner)
 │   ├── sync_github.py     # Indexes public/private/collaborative GitHub repos via `gh` + `git log --author`
 │   ├── tailor.py          # ATS keyword matcher + grounded CV/LM LaTeX compiler + 1-page verifier (`--json` supported)
-│   ├── batch_apply.py     # Paginated LinkedIn, HelloWork, WTTJ, JobTeaser, Indeed, APEC & Meteojob scraper + BUT 2/3 scorer
-│   ├── apply_browser.py   # Async Playwright 5-tab Chrome runner (`.chrome_profile/` cookies, redirects, Easy Apply, portals)
+│   ├── batch_apply.py     # CLI orchestrator for `scripts/scrapers/` -> `tailor.py` -> `apply_browser.py`
+│   ├── apply_browser.py   # CLI entrypoint for `scripts/browser/` (`.chrome_profile/` cookies, Easy Apply, portals)
 │   ├── spontaneous_mail.py # Local tech company finder (`api.gouv.fr`) + `.eml` draft builder
 │   ├── ui_server.py       # Local HTTP server (`127.0.0.1:8765`) for the macOS Web UI
 │   └── check_code.py      # Static syntax/undefined-name checks, optional ruff lint, and unit test runner (`./stage check`)

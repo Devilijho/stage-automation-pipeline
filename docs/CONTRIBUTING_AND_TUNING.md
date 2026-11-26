@@ -9,10 +9,10 @@ Edit `config/profile.json` (single source of truth):
 - `custom_rules` → list of `{"keyword": "...", "answer": "..."}` rules matched case-insensitively across `<input>`, `<select>`, radio groups, and checkboxes in `apply_browser.py` (also editable via the **7. Q&A & Rules** UI tab).
 
 ## Adding New Screening Question Rules
-In `scripts/apply_browser.py`:
-- Text/number inputs: add keyword checks inside `answer_common_questions()` (Section 1).
-- Dropdowns / Radios (`<select>`, `<fieldset>`, `[role='radiogroup']`): add grounded yes/no rules in `classify_yes_no_question()` or verified skill tokens in `_PROFILE_SKILL_CATALOG` (matched against `config/master_profile.md` via `load_master_profile_skills()`).
-- Submit buttons: add text/ARIA selectors to `find_submit_button()`.
+- Grounded yes/no rules and verified skill tokens (`_PROFILE_SKILL_CATALOG`, `classify_yes_no_question()`) live in `scripts/browser/question_rules.py`.
+- Text/number inputs, dropdowns, radios, and checkboxes are filled in `scripts/browser/form_filler.py` (`_answer_text_inputs`, `_answer_selects`, `_answer_radios_and_pills`, `_answer_checkboxes`).
+- Submit button selectors (`find_submit_button()`) live in `scripts/browser/navigation.py`, and per-site confirmation phrases live in `scripts/browser/ats_rules.py`.
+- Board scrapers and scoring live in `scripts/scrapers/boards.py` and `scripts/scrapers/scoring.py`.
 
 ## Adding Academic Background
 Place `curriculum_but2_b.md` inside `config/` and run `./stage sync` to merge your official BUT 2 curriculum into `config/master_profile.md`.

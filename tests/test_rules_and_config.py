@@ -63,6 +63,23 @@ class RulesAndConfigTests(unittest.TestCase):
             "sync_github",
             "tailor",
             "ui_server",
+            "core",
+            "core.browser_session",
+            "core.config",
+            "core.llm",
+            "core.storage",
+            "scrapers",
+            "scrapers.boards",
+            "scrapers.http_client",
+            "scrapers.parsers",
+            "scrapers.scoring",
+            "browser",
+            "browser.ats_rules",
+            "browser.dom_helpers",
+            "browser.form_filler",
+            "browser.navigation",
+            "browser.question_rules",
+            "browser.runner",
         ):
             mod = importlib.import_module(mod_name)
             self.assertIsNotNone(mod)

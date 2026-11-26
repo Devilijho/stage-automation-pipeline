@@ -22,7 +22,8 @@ Use this reference to understand what each module does without reading the full 
 - **`scripts/core/llm.py`**: Locked cached LLM fallback (`ask_llm_for_field`, `call_gemini`) auto-selecting local Ollama, Gemini API, Groq, or OpenAI and persisting to `data/llm_answer_cache.json`.
 - **`./stage check` (`scripts/check_code.py` + `tests/`)**: Runs `py_compile`, AST undefined-name checks, optional `ruff`, and the offline unit test suite.
 
-## 3. Batch Scraper & Ranker (`scripts/batch_apply.py`)
+## 3. Batch Scraper & Ranker (`scripts/batch_apply.py` + `scripts/scrapers/`)
+- **Modules**: `scrapers/boards.py` (7 board scrapers), `scrapers/http_client.py` (pooled `requests.Session` + `AsyncBrowserPool`), `scrapers/parsers.py` (JSON-LD & HTML detail extraction), `scrapers/scoring.py` (BUT 2/3 & 3-tier quality ranking).
 - **Sources** (`--sources`):
   - LinkedIn public guest API (`fr.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search`, supports `--easy-apply` via `f_AL=true`).
   - HelloWork (`www.hellowork.com/fr-fr/emploi/recherche.html?c=Stage&p=1..5`).
@@ -36,7 +37,8 @@ Use this reference to understand what each module does without reading the full 
 - **Scoring (`score_offer`) & Pre-Filter (`is_excluded_final_year_offer`)**: Excludes/penalizes `PFE`, `Fin d'études`, `Fin de cursus`, `Bac+5`, `Master 2` (`-50` or skipped before detail fetch) unless `BUT 2/3` or `Bac+2/3` is explicitly accepted; boosts `BUT 2`, `BUT 3`, `Bac+2`, `Bac+3`, `IUT`, `3 mois`, and Paris/Saclay/Bures-sur-Yvette locations.
 - **Modes**: `--scrape-only`, `--auto`, `--retry drafted|manual_portal|pending`, `--skip-external`.
 
-## 4. Async Multi-Tab Browser Assistant (`scripts/apply_browser.py`)
+## 4. Async Multi-Tab Browser Assistant (`scripts/apply_browser.py` + `scripts/browser/`)
+- **Modules**: `browser/ats_rules.py` (ATS detection, login URLs, submission confirmation), `browser/question_rules.py` (master-profile skill & yes/no matching), `browser/dom_helpers.py` (cookies, Apply redirect following, label extraction), `browser/navigation.py` (Next/Submit discovery, validation errors), `browser/form_filler.py` (inputs, selects, radios, dates, uploads), `browser/runner.py` (auto pool, manual review, login setup).
 - **Concurrency**: Uses `playwright.async_api` + `asyncio.Semaphore(5)` (`--tabs 5`) inside 1 persistent Chrome profile (`.chrome_profile/`). `--auto` runs headless (`channel="chromium"`) by default so it never steals OS keyboard/window focus (pass `--headed` to watch it).
 - **Automation**:
   - `accept_cookies_if_present`: Dismisses Didomi, OneTrust, Axeptio, Tarteaucitron, and generic French consent modals (including iframes).
