@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="$ROOT_DIR/.venv/bin/python"
 
 if [[ ! -x "$PY" ]]; then
-  echo "[!] Missing .venv. Run: python3 -m venv .venv && .venv/bin/pip install playwright pypdf beautifulsoup4 requests"
+  echo "[!] Missing .venv. Run: python3 -m venv .venv && .venv/bin/pip install playwright pypdf beautifulsoup4 requests && .venv/bin/playwright install chromium"
   exit 1
 fi
 

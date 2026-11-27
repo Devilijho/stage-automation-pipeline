@@ -517,9 +517,32 @@ async function copyLogs(btn) {
 }
 
 async function runLogin(stayOnGuide = false) {
-  await fetch('/api/run', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'login'})});
+  const statusEl = document.getElementById('g-login-status');
+  const res = await fetch('/api/run', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'login'})});
+  const runData = await res.json().catch(() => ({}));
   if (!stayOnGuide) showTab('guide', document.getElementById('nav-guide'));
-  document.getElementById('g-login-status').textContent = I18N[currentLang].gLoginMsg;
+  if (runData.started === false) {
+    statusEl.style.color = 'var(--amber)';
+    statusEl.textContent = 'Another task is already running — wait or stop it first.';
+    return;
+  }
+  statusEl.style.color = 'var(--green)';
+  statusEl.textContent = I18N[currentLang].gLoginMsg;
+  pollLogs();
+  setTimeout(async () => {
+    try {
+      const logRes = await fetch('/api/logs');
+      const logData = await logRes.json();
+      const lines = logData.lines || [];
+      const joined = lines.join('\n');
+      if (!logData.running && (joined.includes('Finished (exit code 1)') || joined.includes("Executable doesn't exist"))) {
+        statusEl.style.color = 'var(--red, #f87171)';
+        statusEl.textContent = joined.includes("Executable doesn't exist")
+          ? 'Playwright Chromium missing — run: .venv/bin/playwright install chromium'
+          : 'Login Chrome exited with an error — check Live Logs in Tab 2.';
+      }
+    } catch (_) {}
+  }, 1000);
 }
 
 async function runSync() {
@@ -670,13 +693,21 @@ async function loadProfile() {
   const p = data.profile || {};
   if (p.personal && p.personal.full_name) {
     document.title = debugMode ? `StageBot [DEBUG] — ${p.personal.full_name}` : `StageBot — ${p.personal.full_name}`;
+  } else {
+    document.title = debugMode ? 'StageBot [DEBUG]' : 'StageBot';
   }
   if (p.education && p.internship) {
     document.getElementById('sidebar-sub').textContent = `${p.education.level} · ${p.internship.start_date} → ${p.internship.end_date}`;
+  } else {
+    document.getElementById('sidebar-sub').textContent = 'New profile — set up in Tab 6';
   }
   if (p.search && Array.isArray(p.search.queries)) {
     document.getElementById('q-input').value = p.search.queries.join(', ');
     document.getElementById('pref-queries').value = p.search.queries.join(', ');
+  } else {
+    document.getElementById('q-input').value = '';
+    document.getElementById('q-input').placeholder = 'e.g. stage informatique, stage développeur web';
+    document.getElementById('pref-queries').value = '';
   }
   const pr = p.preferences || {};
   document.getElementById('pref-target-roles').value = (pr.target_roles || []).join(', ');
